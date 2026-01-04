@@ -3,8 +3,9 @@ runtime: go1
 build:
   commands:
     build:
-      - echo "Installing Go 1.21..." && wget -q https://go.dev/dl/go1.21.0.linux-amd64.tar.gz && tar -C /tmp -xzf go1.21.0.linux-amd64.tar.gz && export PATH=/tmp/go/bin:$PATH && go version && go build -o app cmd/api/main.go
+      - go build -o app cmd/api/main.go
 run:
+  runtime-version: 1.21
   command: ./app
   network:
     port: 8080
