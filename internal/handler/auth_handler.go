@@ -1,43 +1,30 @@
 package handler
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"linda-salon-api/internal/auth"
 	"linda-salon-api/internal/model"
 	"linda-salon-api/internal/repository"
 )
 
 type AuthHandler struct {
-	userRepo     *repository.UserRepository
-	jwtManager   *auth.JWTManager
-	googleConfig *oauth2.Config
+	userRepo   *repository.UserRepository
+	jwtManager *auth.JWTManager
 }
 
 func NewAuthHandler(userRepo *repository.UserRepository, jwtManager *auth.JWTManager) *AuthHandler {
 	return &AuthHandler{
 		userRepo:   userRepo,
 		jwtManager: jwtManager,
-		googleConfig: &oauth2.Config{
-			ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-			ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-			RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
-			Scopes: []string{
-				"https://www.googleapis.com/auth/userinfo.email",
-				"https://www.googleapis.com/auth/userinfo.profile",
-			},
-			Endpoint: google.Endpoint,
-		},
 	}
 }
 
@@ -254,12 +241,25 @@ func (h *AuthHandler) GoogleLoginURL(c *gin.Context) {
 	rand.Read(b)
 	state := base64.URLEncoding.EncodeToString(b)
 
-	// Store state in session/cookie (simplified - use session in production)
+	// Store state in cookie
 	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
 
-	url := h.googleConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	// Build Google OAuth URL manually
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	redirectURI := os.Getenv("GOOGLE_REDIRECT_URL")
+
+	params := url.Values{}
+	params.Add("client_id", clientID)
+	params.Add("redirect_uri", redirectURI)
+	params.Add("response_type", "code")
+	params.Add("scope", "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile")
+	params.Add("state", state)
+	params.Add("access_type", "offline")
+
+	authURL := fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?%s", params.Encode())
+
 	c.JSON(http.StatusOK, gin.H{
-		"url": url,
+		"url": authURL,
 	})
 }
 
@@ -282,25 +282,16 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 	// Exchange code for token
 	code := c.Query("code")
-	token, err := h.googleConfig.Exchange(context.Background(), code)
+	accessToken, err := h.exchangeCodeForToken(code)
 	if err != nil {
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_exchange_failed")
 		return
 	}
 
 	// Get user info from Google
-	client := h.googleConfig.Client(context.Background(), token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	googleUser, err := h.getGoogleUserInfo(accessToken)
 	if err != nil {
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=userinfo_failed")
-		return
-	}
-	defer resp.Body.Close()
-
-	data, _ := io.ReadAll(resp.Body)
-	var googleUser GoogleUserInfo
-	if err := json.Unmarshal(data, &googleUser); err != nil {
-		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=parse_failed")
 		return
 	}
 
@@ -366,4 +357,69 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 	// Redirect to frontend
 	c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/?login=success")
+}
+
+// Helper function to exchange authorization code for access token
+func (h *AuthHandler) exchangeCodeForToken(code string) (string, error) {
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	redirectURI := os.Getenv("GOOGLE_REDIRECT_URL")
+
+	data := url.Values{}
+	data.Set("code", code)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("redirect_uri", redirectURI)
+	data.Set("grant_type", "authorization_code")
+
+	resp, err := http.PostForm("https://oauth2.googleapis.com/token", data)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+	}
+
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", err
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
+// Helper function to get user info from Google
+func (h *AuthHandler) getGoogleUserInfo(accessToken string) (*GoogleUserInfo, error) {
+	req, err := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var userInfo GoogleUserInfo
+	if err := json.Unmarshal(body, &userInfo); err != nil {
+		return nil, err
+	}
+
+	return &userInfo, nil
 }
