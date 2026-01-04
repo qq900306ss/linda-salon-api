@@ -2,15 +2,8 @@ version: 1.0
 runtime: go1
 build:
   commands:
-    pre-build:
-      - echo "Installing Go 1.21..."
-      - wget -q https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
-      - tar -C /tmp -xzf go1.21.0.linux-amd64.tar.gz
-      - export PATH=/tmp/go/bin:$PATH
-      - go version
     build:
-      - export PATH=/tmp/go/bin:$PATH
-      - go build -o app cmd/api/main.go
+      - echo "Installing Go 1.21..." && wget -q https://go.dev/dl/go1.21.0.linux-amd64.tar.gz && tar -C /tmp -xzf go1.21.0.linux-amd64.tar.gz && export PATH=/tmp/go/bin:$PATH && go version && go build -o app cmd/api/main.go
 run:
   command: ./app
   network:
