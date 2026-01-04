@@ -1,11 +1,10 @@
 version: 1.0
-runtime: go1
+runtime: go121
 build:
   commands:
     build:
       - go build -o app cmd/api/main.go
 run:
-  runtime-version: 1.21
   command: ./app
   network:
     port: 8080
