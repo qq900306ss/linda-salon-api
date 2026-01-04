@@ -182,6 +182,12 @@ docker run -p 8080:8080 --env-file .env linda-salon-api
 
 ## AWS App Runner 部署
 
+⚠️ **重要限制**：AWS App Runner 的 `runtime: go1` 只支援 **Go 1.18.10**
+- 必須使用 Go 1.18 相容的套件版本
+- 不可使用 `toolchain` 指令
+- 詳見 `GO_VERSION_FIX.md`
+
+部署步驟：
 1. 推送至 GitHub
 2. 登入 AWS Console
 3. 前往 App Runner
@@ -189,6 +195,8 @@ docker run -p 8080:8080 --env-file .env linda-salon-api
 5. 連接 GitHub repository
 6. 設定環境變數（從 .env）
 7. 部署
+
+**已部署 URL**: https://f82cb2me3v.ap-northeast-1.awsapprunner.com
 
 ## 測試
 

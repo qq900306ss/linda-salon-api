@@ -2,7 +2,15 @@
 
 ## 問題
 本地的 Go linter 會自動將 go.mod 升級到較新版本（1.23/1.24），並加入 `toolchain` 指令，
-但 AWS App Runner 只支援 Go 1.18，導致部署失敗。
+但 **AWS App Runner 的 `runtime: go1` 只支援 Go 1.18.10**，導致部署失敗。
+
+## 重要提醒
+⚠️ **AWS App Runner Go 限制**：
+- `runtime: go1` = Go 1.18.10（固定版本）
+- 不支援 Go 1.19+
+- 不支援 `toolchain` 指令
+- 標準庫套件如 `slices`, `maps`, `cmp` 在 Go 1.21+ 才加入，1.18 沒有
+- 建議使用 2022 年底發布的套件版本（Go 1.18 時代）
 
 ## 解決方案
 
