@@ -37,6 +37,14 @@ type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+type GoogleLoginRequest struct {
+	GoogleID string `json:"google_id" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Name     string `json:"name" binding:"required"`
+	Picture  string `json:"picture"`
+	Phone    string `json:"phone"` // Optional, can be filled later
+}
+
 // Register godoc
 // @Summary Register a new user
 // @Tags auth
@@ -201,4 +209,82 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, user)
+}
+
+// GoogleLogin godoc
+// @Summary Login or register with Google OAuth
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body GoogleLoginRequest true "Google login request"
+// @Success 200 {object} map[string]interface{}
+// @Router /auth/google [post]
+func (h *AuthHandler) GoogleLogin(c *gin.Context) {
+	var req GoogleLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if user already exists by Google ID
+	user, err := h.userRepo.GetByGoogleID(req.GoogleID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check user"})
+		return
+	}
+
+	// If user doesn't exist, check by email
+	if user == nil {
+		user, err = h.userRepo.GetByEmail(req.Email)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check email"})
+			return
+		}
+
+		// If user exists with same email but no Google ID, link the account
+		if user != nil {
+			user.GoogleID = req.GoogleID
+			user.Avatar = req.Picture
+			if err := h.userRepo.Update(user); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to link Google account"})
+				return
+			}
+		}
+	}
+
+	// If user still doesn't exist, create new user
+	if user == nil {
+		// For Google users, phone is optional. Generate a temporary one if not provided
+		phone := req.Phone
+		if phone == "" {
+			phone = "google_" + req.GoogleID // Temporary phone, user can update later
+		}
+
+		user = &model.User{
+			Name:         req.Name,
+			Email:        req.Email,
+			Phone:        phone,
+			GoogleID:     req.GoogleID,
+			Avatar:       req.Picture,
+			Role:         "customer",
+			PasswordHash: "", // No password for OAuth users
+		}
+
+		if err := h.userRepo.Create(user); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+			return
+		}
+	}
+
+	// Generate tokens
+	tokens, err := h.jwtManager.GenerateTokenPair(user.ID, user.Email, user.Role)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user":   user,
+		"tokens": tokens,
+	})
 }
