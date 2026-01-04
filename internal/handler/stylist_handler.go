@@ -258,3 +258,25 @@ func (h *StylistHandler) GetSchedules(c *gin.Context) {
 
 	c.JSON(http.StatusOK, schedules)
 }
+
+// DeleteSchedule godoc
+// @Summary Delete stylist schedule (admin only)
+// @Tags stylists
+// @Security BearerAuth
+// @Param id path int true "Schedule ID"
+// @Success 204
+// @Router /stylists/schedules/{id} [delete]
+func (h *StylistHandler) DeleteSchedule(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid schedule ID"})
+		return
+	}
+
+	if err := h.stylistRepo.DeleteSchedule(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete schedule"})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}

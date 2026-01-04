@@ -202,6 +202,7 @@ func setupRouter(
 			admin.PUT("/stylists/:id", stylistHandler.UpdateStylist)
 			admin.DELETE("/stylists/:id", stylistHandler.DeleteStylist)
 			admin.POST("/stylists/:id/schedules", stylistHandler.CreateSchedule)
+			admin.DELETE("/stylists/schedules/:id", stylistHandler.DeleteSchedule)
 
 			// Booking management
 			admin.PATCH("/bookings/:id/status", bookingHandler.UpdateBookingStatus)
