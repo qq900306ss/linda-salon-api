@@ -1,10 +1,17 @@
 version: 1.0
-runtime: go121
+runtime: go1
 build:
   commands:
+    pre-build:
+      - wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+      - rm -rf /root/.goenv/versions/1.21.0 && mkdir -p /root/.goenv/versions/1.21.0
+      - tar -C /root/.goenv/versions/1.21.0 -xzf go1.21.0.linux-amd64.tar.gz --strip-components=1
+      - export PATH=/root/.goenv/versions/1.21.0/bin:$PATH
+      - go version
     build:
-      - go build -o app cmd/api/main.go
+      - export PATH=/root/.goenv/versions/1.21.0/bin:$PATH && go build -o app cmd/api/main.go
 run:
+  runtime-version: 1.21
   command: ./app
   network:
     port: 8080
