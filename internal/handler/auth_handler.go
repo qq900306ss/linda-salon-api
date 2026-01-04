@@ -261,13 +261,19 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 		}
 
 		user = &model.User{
-			Name:         req.Name,
-			Email:        req.Email,
-			Phone:        phone,
-			GoogleID:     req.GoogleID,
-			Avatar:       req.Picture,
-			Role:         "customer",
-			PasswordHash: "", // No password for OAuth users
+			Name:     req.Name,
+			Email:    req.Email,
+			Phone:    phone,
+			GoogleID: req.GoogleID,
+			Avatar:   req.Picture,
+			Role:     "customer",
+		}
+
+		// For OAuth users, set a random unguessable password hash
+		// They cannot login with password, only through OAuth
+		if err := user.HashPassword("oauth_" + req.GoogleID + "_" + req.Email); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+			return
 		}
 
 		if err := h.userRepo.Create(user); err != nil {
