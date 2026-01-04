@@ -108,6 +108,17 @@ func (r *BookingRepository) GetByStylistAndDate(stylistID uint, date time.Time) 
 	return bookings, err
 }
 
+func (r *BookingRepository) GetByStylistAndDateString(stylistID uint, dateStr string) ([]model.Booking, error) {
+	var bookings []model.Booking
+	err := r.db.Preload("User").Preload("Service").
+		Where("stylist_id = ? AND booking_date = ? AND status IN ?",
+			stylistID, dateStr,
+			[]string{model.BookingStatusPending, model.BookingStatusConfirmed}).
+		Order("booking_time").
+		Find(&bookings).Error
+	return bookings, err
+}
+
 func (r *BookingRepository) UpdateStatus(id uint, status string) error {
 	return r.db.Model(&model.Booking{}).Where("id = ?", id).Update("status", status).Error
 }

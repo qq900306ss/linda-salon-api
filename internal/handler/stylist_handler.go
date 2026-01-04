@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"linda-salon-api/internal/model"
@@ -11,10 +12,20 @@ import (
 
 type StylistHandler struct {
 	stylistRepo *repository.StylistRepository
+	bookingRepo *repository.BookingRepository
 }
 
 func NewStylistHandler(stylistRepo *repository.StylistRepository) *StylistHandler {
-	return &StylistHandler{stylistRepo: stylistRepo}
+	return &StylistHandler{
+		stylistRepo: stylistRepo,
+	}
+}
+
+func NewStylistHandlerWithBooking(stylistRepo *repository.StylistRepository, bookingRepo *repository.BookingRepository) *StylistHandler {
+	return &StylistHandler{
+		stylistRepo: stylistRepo,
+		bookingRepo: bookingRepo,
+	}
 }
 
 type CreateStylistRequest struct {
@@ -279,4 +290,131 @@ func (h *StylistHandler) DeleteSchedule(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// TimeSlot represents an available time slot
+type TimeSlot struct {
+	Time      string `json:"time"`
+	Available bool   `json:"available"`
+}
+
+// GetAvailableSlots godoc
+// @Summary Get available time slots for a stylist on a specific date
+// @Tags stylists
+// @Produce json
+// @Param id path int true "Stylist ID"
+// @Param date query string true "Date (YYYY-MM-DD)"
+// @Param duration query int true "Service duration in minutes"
+// @Success 200 {array} TimeSlot
+// @Router /stylists/{id}/available-slots [get]
+func (h *StylistHandler) GetAvailableSlots(c *gin.Context) {
+	stylistID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid stylist ID"})
+		return
+	}
+
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Date is required"})
+		return
+	}
+
+	durationStr := c.Query("duration")
+	if durationStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Duration is required"})
+		return
+	}
+
+	duration, err := strconv.Atoi(durationStr)
+	if err != nil || duration <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid duration"})
+		return
+	}
+
+	// Parse date
+	date, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format, use YYYY-MM-DD"})
+		return
+	}
+
+	// Get day of week (0=Sunday, 6=Saturday)
+	dayOfWeek := int(date.Weekday())
+
+	// Get stylist's schedule for this day
+	schedules, err := h.stylistRepo.GetSchedulesByStylistID(uint(stylistID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch schedules"})
+		return
+	}
+
+	// Find schedule for this day of week
+	var daySchedule *model.StylistSchedule
+	for i := range schedules {
+		if schedules[i].DayOfWeek == dayOfWeek && schedules[i].IsActive {
+			daySchedule = &schedules[i]
+			break
+		}
+	}
+
+	// If no schedule for this day, return empty slots
+	if daySchedule == nil {
+		c.JSON(http.StatusOK, []TimeSlot{})
+		return
+	}
+
+	// Get existing bookings for this stylist on this date
+	var existingBookings []model.Booking
+	if h.bookingRepo != nil {
+		existingBookings, err = h.bookingRepo.GetByStylistAndDateString(uint(stylistID), dateStr)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch bookings"})
+			return
+		}
+	}
+
+	// Parse schedule times
+	startTime, _ := time.Parse("15:04", daySchedule.StartTime)
+	endTime, _ := time.Parse("15:04", daySchedule.EndTime)
+
+	// Generate time slots (30-minute intervals)
+	var slots []TimeSlot
+	currentTime := startTime
+
+	for currentTime.Before(endTime) {
+		timeStr := currentTime.Format("15:04")
+
+		// Check if this slot has enough time for the service
+		slotEnd := currentTime.Add(time.Duration(duration) * time.Minute)
+		if slotEnd.After(endTime) {
+			break // Not enough time before end of work day
+		}
+
+		// Check if this slot conflicts with existing bookings
+		available := true
+		for _, booking := range existingBookings {
+			if booking.Status == "cancelled" {
+				continue
+			}
+
+			bookingTime, _ := time.Parse("15:04", booking.BookingTime)
+			bookingEnd := bookingTime.Add(time.Duration(booking.Service.Duration) * time.Minute)
+
+			// Check for overlap
+			if (currentTime.Before(bookingEnd) && slotEnd.After(bookingTime)) {
+				available = false
+				break
+			}
+		}
+
+		slots = append(slots, TimeSlot{
+			Time:      timeStr,
+			Available: available,
+		})
+
+		currentTime = currentTime.Add(30 * time.Minute)
+	}
+
+	c.JSON(http.StatusOK, slots)
 }

@@ -71,7 +71,7 @@ func main() {
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(userRepo, jwtManager)
 	serviceHandler := handler.NewServiceHandler(serviceRepo)
-	stylistHandler := handler.NewStylistHandler(stylistRepo)
+	stylistHandler := handler.NewStylistHandlerWithBooking(stylistRepo, bookingRepo)
 	bookingHandler := handler.NewBookingHandler(bookingRepo, serviceRepo, stylistRepo, userRepo)
 	statsHandler := handler.NewStatisticsHandler(bookingRepo, stylistRepo)
 	uploadHandler := handler.NewUploadHandler(s3Client, &cfg.AWS)
@@ -163,6 +163,7 @@ func setupRouter(
 			stylists.GET("", stylistHandler.ListStylists)
 			stylists.GET("/:id", stylistHandler.GetStylist)
 			stylists.GET("/:id/schedules", stylistHandler.GetSchedules)
+			stylists.GET("/:id/available-slots", stylistHandler.GetAvailableSlots)
 		}
 
 		// Protected routes (require authentication)
