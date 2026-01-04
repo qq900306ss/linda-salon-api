@@ -398,8 +398,8 @@ func (h *StylistHandler) GetAvailableSlots(c *gin.Context) {
 				continue
 			}
 
-			bookingTime, _ := time.Parse("15:04", booking.BookingTime)
-			bookingEnd := bookingTime.Add(time.Duration(booking.Service.Duration) * time.Minute)
+			bookingTime, _ := time.Parse("15:04", booking.StartTime)
+			bookingEnd := bookingTime.Add(time.Duration(booking.Duration) * time.Minute)
 
 			// Check for overlap
 			if (currentTime.Before(bookingEnd) && slotEnd.After(bookingTime)) {
