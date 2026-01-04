@@ -83,16 +83,19 @@ func AdminRequired(jwtManager *auth.JWTManager) gin.HandlerFunc {
 }
 
 func extractToken(c *gin.Context) string {
+	// Try to get token from Authorization header first
 	authHeader := c.GetHeader(AuthorizationHeader)
-	if authHeader == "" {
-		return ""
+	if authHeader != "" && strings.HasPrefix(authHeader, BearerPrefix) {
+		return strings.TrimPrefix(authHeader, BearerPrefix)
 	}
 
-	if !strings.HasPrefix(authHeader, BearerPrefix) {
-		return ""
+	// Fallback to cookie
+	token, err := c.Cookie("access_token")
+	if err == nil && token != "" {
+		return token
 	}
 
-	return strings.TrimPrefix(authHeader, BearerPrefix)
+	return ""
 }
 
 // GetUserID retrieves user ID from context

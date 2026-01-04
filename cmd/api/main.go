@@ -148,7 +148,8 @@ func setupRouter(
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefreshToken)
-			auth.POST("/google", authHandler.GoogleLogin)
+			auth.GET("/google/login", authHandler.GoogleLoginURL)
+			auth.GET("/google/callback", authHandler.GoogleCallback)
 		}
 
 		// Public service routes

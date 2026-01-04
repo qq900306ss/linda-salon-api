@@ -1,24 +1,55 @@
 package handler
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"io"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"linda-salon-api/internal/auth"
 	"linda-salon-api/internal/model"
 	"linda-salon-api/internal/repository"
 )
 
 type AuthHandler struct {
-	userRepo   *repository.UserRepository
-	jwtManager *auth.JWTManager
+	userRepo     *repository.UserRepository
+	jwtManager   *auth.JWTManager
+	googleConfig *oauth2.Config
 }
 
 func NewAuthHandler(userRepo *repository.UserRepository, jwtManager *auth.JWTManager) *AuthHandler {
 	return &AuthHandler{
 		userRepo:   userRepo,
 		jwtManager: jwtManager,
+		googleConfig: &oauth2.Config{
+			ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+			ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+			RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
+			Scopes: []string{
+				"https://www.googleapis.com/auth/userinfo.email",
+				"https://www.googleapis.com/auth/userinfo.profile",
+			},
+			Endpoint: google.Endpoint,
+		},
 	}
+}
+
+type GoogleUserInfo struct {
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	VerifiedEmail bool   `json:"verified_email"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Picture       string `json:"picture"`
+	Locale        string `json:"locale"`
 }
 
 type RegisterRequest struct {
@@ -211,42 +242,89 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
-// GoogleLogin godoc
-// @Summary Login or register with Google OAuth
+// GoogleLoginURL godoc
+// @Summary Get Google OAuth login URL
 // @Tags auth
-// @Accept json
 // @Produce json
-// @Param request body GoogleLoginRequest true "Google login request"
-// @Success 200 {object} map[string]interface{}
-// @Router /auth/google [post]
-func (h *AuthHandler) GoogleLogin(c *gin.Context) {
-	var req GoogleLoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// @Success 200 {object} map[string]string
+// @Router /auth/google/login [get]
+func (h *AuthHandler) GoogleLoginURL(c *gin.Context) {
+	// Generate random state for CSRF protection
+	b := make([]byte, 32)
+	rand.Read(b)
+	state := base64.URLEncoding.EncodeToString(b)
+
+	// Store state in session/cookie (simplified - use session in production)
+	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
+
+	url := h.googleConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	c.JSON(http.StatusOK, gin.H{
+		"url": url,
+	})
+}
+
+// GoogleCallback godoc
+// @Summary Handle Google OAuth callback
+// @Tags auth
+// @Produce json
+// @Param state query string true "OAuth state"
+// @Param code query string true "OAuth code"
+// @Success 302 {string} string "Redirect to frontend"
+// @Router /auth/google/callback [get]
+func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	// Verify state for CSRF protection
+	state := c.Query("state")
+	storedState, err := c.Cookie("oauth_state")
+	if err != nil || state != storedState {
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=invalid_state")
+		return
+	}
+
+	// Exchange code for token
+	code := c.Query("code")
+	token, err := h.googleConfig.Exchange(context.Background(), code)
+	if err != nil {
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_exchange_failed")
+		return
+	}
+
+	// Get user info from Google
+	client := h.googleConfig.Client(context.Background(), token)
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	if err != nil {
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=userinfo_failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	var googleUser GoogleUserInfo
+	if err := json.Unmarshal(data, &googleUser); err != nil {
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=parse_failed")
 		return
 	}
 
 	// Check if user already exists by Google ID
-	user, err := h.userRepo.GetByGoogleID(req.GoogleID)
+	user, err := h.userRepo.GetByGoogleID(googleUser.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check user"})
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=db_error")
 		return
 	}
 
 	// If user doesn't exist, check by email
 	if user == nil {
-		user, err = h.userRepo.GetByEmail(req.Email)
+		user, err = h.userRepo.GetByEmail(googleUser.Email)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check email"})
+			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=db_error")
 			return
 		}
 
 		// If user exists with same email but no Google ID, link the account
 		if user != nil {
-			user.GoogleID = req.GoogleID
-			user.Avatar = req.Picture
+			user.GoogleID = googleUser.ID
+			user.Avatar = googleUser.Picture
 			if err := h.userRepo.Update(user); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to link Google account"})
+				c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=update_failed")
 				return
 			}
 		}
@@ -254,43 +332,38 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 
 	// If user still doesn't exist, create new user
 	if user == nil {
-		// For Google users, phone is optional. Generate a temporary one if not provided
-		phone := req.Phone
-		if phone == "" {
-			phone = "google_" + req.GoogleID // Temporary phone, user can update later
-		}
-
 		user = &model.User{
-			Name:     req.Name,
-			Email:    req.Email,
-			Phone:    phone,
-			GoogleID: req.GoogleID,
-			Avatar:   req.Picture,
+			Name:     googleUser.Name,
+			Email:    googleUser.Email,
+			Phone:    "google_" + googleUser.ID, // Temporary phone
+			GoogleID: googleUser.ID,
+			Avatar:   googleUser.Picture,
 			Role:     "customer",
 		}
 
 		// For OAuth users, set a random unguessable password hash
-		// They cannot login with password, only through OAuth
-		if err := user.HashPassword("oauth_" + req.GoogleID + "_" + req.Email); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		if err := user.HashPassword("oauth_" + googleUser.ID + "_" + googleUser.Email); err != nil {
+			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=hash_failed")
 			return
 		}
 
 		if err := h.userRepo.Create(user); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=create_failed")
 			return
 		}
 	}
 
-	// Generate tokens
+	// Generate JWT tokens
 	tokens, err := h.jwtManager.GenerateTokenPair(user.ID, user.Email, user.Role)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_failed")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user":   user,
-		"tokens": tokens,
-	})
+	// Set JWT tokens in HTTP-only cookies
+	c.SetCookie("access_token", tokens.AccessToken, 3600, "/", "", false, true)
+	c.SetCookie("refresh_token", tokens.RefreshToken, 86400*7, "/", "", false, true)
+
+	// Redirect to frontend
+	c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/?login=success")
 }
