@@ -114,7 +114,7 @@ func (r *BookingRepository) GetByStylistAndDateString(stylistID uint, dateStr st
 		Where("stylist_id = ? AND booking_date = ? AND status IN ?",
 			stylistID, dateStr,
 			[]string{model.BookingStatusPending, model.BookingStatusConfirmed}).
-		Order("booking_time").
+		Order("start_time").
 		Find(&bookings).Error
 	return bookings, err
 }
