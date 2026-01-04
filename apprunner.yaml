@@ -11,7 +11,7 @@ run:
     port: 8080
     env: PORT
   env:
-    - name: GIN_MODE
-      value: "release"
     - name: PORT
       value: "8080"
+    - name: GIN_MODE
+      value: "release"
