@@ -241,8 +241,8 @@ func (h *AuthHandler) GoogleLoginURL(c *gin.Context) {
 	rand.Read(b)
 	state := base64.URLEncoding.EncodeToString(b)
 
-	// Store state in cookie
-	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
+	// Store state in cookie with SameSite=None for cross-origin
+	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("oauth_state=%s; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=None", state))
 
 	// Build Google OAuth URL manually
 	clientID := os.Getenv("GOOGLE_CLIENT_ID")
