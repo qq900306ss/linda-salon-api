@@ -351,9 +351,10 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	// Set JWT tokens in HTTP-only cookies
-	c.SetCookie("access_token", tokens.AccessToken, 3600, "/", "", false, true)
-	c.SetCookie("refresh_token", tokens.RefreshToken, 86400*7, "/", "", false, true)
+	// Set JWT tokens in HTTP-only cookies with SameSite=None for cross-origin
+	// Note: SameSite=None requires Secure=true (HTTPS only)
+	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("access_token=%s; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=None", tokens.AccessToken))
+	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("refresh_token=%s; Path=/; Max-Age=%d; HttpOnly; Secure; SameSite=None", tokens.RefreshToken, 86400*7))
 
 	// Redirect to frontend
 	c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/?login=success")
