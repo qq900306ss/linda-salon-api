@@ -13,12 +13,12 @@ type User struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	Name         string `gorm:"type:varchar(100);not null" json:"name"`
-	Email        string `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
-	Phone        string `gorm:"type:varchar(20);uniqueIndex;not null" json:"phone"`
-	PasswordHash string `gorm:"type:varchar(255);not null" json:"-"`
-	Role         string `gorm:"type:varchar(20);not null;default:'customer'" json:"role"` // customer, admin
-	Avatar       string `gorm:"type:varchar(500)" json:"avatar,omitempty"`
+	Name         string  `gorm:"type:varchar(100);not null" json:"name"`
+	Email        string  `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
+	Phone        *string `gorm:"type:varchar(20);uniqueIndex" json:"phone,omitempty"` // 改為指標類型，允許 NULL
+	PasswordHash string  `gorm:"type:varchar(255);not null" json:"-"`
+	Role         string  `gorm:"type:varchar(20);not null;default:'customer'" json:"role"` // customer, admin
+	Avatar       string  `gorm:"type:varchar(500)" json:"avatar,omitempty"`
 
 	// OAuth fields
 	GoogleID string `gorm:"type:varchar(255);uniqueIndex" json:"google_id,omitempty"`

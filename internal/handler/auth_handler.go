@@ -105,7 +105,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	user := &model.User{
 		Name:  req.Name,
 		Email: req.Email,
-		Phone: req.Phone,
+		Phone: &req.Phone, // 轉換為指標
 		Role:  "customer",
 	}
 
@@ -348,17 +348,10 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	if user == nil {
 		log.Printf("➕ [OAuth] Creating new user: %s (%s)", googleUser.Name, googleUser.Email)
 
-		// Generate temporary phone (max 20 chars, database constraint)
-		// Use last 10 digits of Google ID to keep it under the limit
-		tempPhone := googleUser.ID
-		if len(tempPhone) > 10 {
-			tempPhone = tempPhone[len(tempPhone)-10:]
-		}
-
 		user = &model.User{
 			Name:     googleUser.Name,
 			Email:    googleUser.Email,
-			Phone:    "g" + tempPhone, // g + last 10 digits of Google ID (max 11 chars)
+			Phone:    nil, // OAuth 用戶可以不填電話，稍後在個人資料頁面補填
 			GoogleID: googleUser.ID,
 			Avatar:   googleUser.Picture,
 			Role:     "customer",
