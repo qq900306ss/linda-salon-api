@@ -347,10 +347,18 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	// If user still doesn't exist, create new user
 	if user == nil {
 		log.Printf("➕ [OAuth] Creating new user: %s (%s)", googleUser.Name, googleUser.Email)
+
+		// Generate temporary phone (max 20 chars, database constraint)
+		// Use last 10 digits of Google ID to keep it under the limit
+		tempPhone := googleUser.ID
+		if len(tempPhone) > 10 {
+			tempPhone = tempPhone[len(tempPhone)-10:]
+		}
+
 		user = &model.User{
 			Name:     googleUser.Name,
 			Email:    googleUser.Email,
-			Phone:    "google_" + googleUser.ID, // Temporary phone
+			Phone:    "g" + tempPhone, // g + last 10 digits of Google ID (max 11 chars)
 			GoogleID: googleUser.ID,
 			Avatar:   googleUser.Picture,
 			Role:     "customer",
