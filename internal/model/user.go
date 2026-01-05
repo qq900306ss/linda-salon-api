@@ -21,8 +21,8 @@ type User struct {
 	Avatar       string  `gorm:"type:varchar(500)" json:"avatar,omitempty"`
 
 	// OAuth fields
-	GoogleID string `gorm:"type:varchar(255);uniqueIndex" json:"google_id,omitempty"`
-	LineID   string `gorm:"type:varchar(255);uniqueIndex" json:"line_id,omitempty"`
+	GoogleID *string `gorm:"type:varchar(255);uniqueIndex" json:"google_id,omitempty"` // 改為指標，允許 NULL
+	LineID   *string `gorm:"type:varchar(255);uniqueIndex" json:"line_id,omitempty"`   // 改為指標，允許 NULL
 
 	// Relationships
 	Bookings []Booking `gorm:"foreignKey:UserID" json:"bookings,omitempty"`

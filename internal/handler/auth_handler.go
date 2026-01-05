@@ -333,7 +333,7 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		// If user exists with same email but no Google ID, link the account
 		if user != nil {
 			log.Printf("🔗 [OAuth] Linking existing user account (ID: %d) with Google ID", user.ID)
-			user.GoogleID = googleUser.ID
+			user.GoogleID = &googleUser.ID
 			user.Avatar = googleUser.Picture
 			if err := h.userRepo.Update(user); err != nil {
 				log.Printf("❌ [OAuth] Failed to link Google account: %v", err)
@@ -352,7 +352,7 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 			Name:     googleUser.Name,
 			Email:    googleUser.Email,
 			Phone:    nil, // OAuth 用戶可以不填電話，稍後在個人資料頁面補填
-			GoogleID: googleUser.ID,
+			GoogleID: &googleUser.ID,
 			Avatar:   googleUser.Picture,
 			Role:     "customer",
 		}
