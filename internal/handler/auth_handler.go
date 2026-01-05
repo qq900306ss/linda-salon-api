@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -272,57 +273,80 @@ func (h *AuthHandler) GoogleLoginURL(c *gin.Context) {
 // @Success 302 {string} string "Redirect to frontend"
 // @Router /auth/google/callback [get]
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	log.Println("🔐 [OAuth] Google callback received")
+
 	// Verify state for CSRF protection
 	state := c.Query("state")
 	storedState, err := c.Cookie("oauth_state")
-	if err != nil || state != storedState {
+	if err != nil {
+		log.Printf("❌ [OAuth] Failed to get oauth_state cookie: %v", err)
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=invalid_state")
 		return
 	}
+	if state != storedState {
+		log.Printf("❌ [OAuth] State mismatch: got %s, expected %s", state, storedState)
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=invalid_state")
+		return
+	}
+	log.Println("✅ [OAuth] State verified successfully")
 
 	// Exchange code for token
 	code := c.Query("code")
+	log.Printf("🔄 [OAuth] Exchanging code for access token...")
 	accessToken, err := h.exchangeCodeForToken(code)
 	if err != nil {
+		log.Printf("❌ [OAuth] Token exchange failed: %v", err)
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_exchange_failed")
 		return
 	}
+	log.Println("✅ [OAuth] Access token obtained")
 
 	// Get user info from Google
+	log.Printf("👤 [OAuth] Fetching user info from Google...")
 	googleUser, err := h.getGoogleUserInfo(accessToken)
 	if err != nil {
+		log.Printf("❌ [OAuth] Failed to get user info: %v", err)
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=userinfo_failed")
 		return
 	}
+	log.Printf("✅ [OAuth] User info received: email=%s, name=%s", googleUser.Email, googleUser.Name)
 
 	// Check if user already exists by Google ID
+	log.Printf("🔍 [OAuth] Checking if user exists with Google ID: %s", googleUser.ID)
 	user, err := h.userRepo.GetByGoogleID(googleUser.ID)
 	if err != nil {
+		log.Printf("❌ [OAuth] Database error checking Google ID: %v", err)
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=db_error")
 		return
 	}
 
 	// If user doesn't exist, check by email
 	if user == nil {
+		log.Printf("🔍 [OAuth] User not found by Google ID, checking email: %s", googleUser.Email)
 		user, err = h.userRepo.GetByEmail(googleUser.Email)
 		if err != nil {
+			log.Printf("❌ [OAuth] Database error checking email: %v", err)
 			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=db_error")
 			return
 		}
 
 		// If user exists with same email but no Google ID, link the account
 		if user != nil {
+			log.Printf("🔗 [OAuth] Linking existing user account (ID: %d) with Google ID", user.ID)
 			user.GoogleID = googleUser.ID
 			user.Avatar = googleUser.Picture
 			if err := h.userRepo.Update(user); err != nil {
+				log.Printf("❌ [OAuth] Failed to link Google account: %v", err)
 				c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=update_failed")
 				return
 			}
+			log.Printf("✅ [OAuth] Google account linked successfully")
 		}
 	}
 
 	// If user still doesn't exist, create new user
 	if user == nil {
+		log.Printf("➕ [OAuth] Creating new user: %s (%s)", googleUser.Name, googleUser.Email)
 		user = &model.User{
 			Name:     googleUser.Name,
 			Email:    googleUser.Email,
@@ -334,27 +358,36 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 		// For OAuth users, set a random unguessable password hash
 		if err := user.HashPassword("oauth_" + googleUser.ID + "_" + googleUser.Email); err != nil {
+			log.Printf("❌ [OAuth] Failed to hash password: %v", err)
 			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=hash_failed")
 			return
 		}
 
 		if err := h.userRepo.Create(user); err != nil {
+			log.Printf("❌ [OAuth] Failed to create user: %v", err)
 			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=create_failed")
 			return
 		}
+		log.Printf("✅ [OAuth] New user created with ID: %d", user.ID)
+	} else {
+		log.Printf("✅ [OAuth] Existing user found with ID: %d", user.ID)
 	}
 
 	// Generate JWT tokens
+	log.Printf("🔑 [OAuth] Generating JWT tokens for user ID: %d", user.ID)
 	tokens, err := h.jwtManager.GenerateTokenPair(user.ID, user.Email, user.Role)
 	if err != nil {
+		log.Printf("❌ [OAuth] Failed to generate tokens: %v", err)
 		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_failed")
 		return
 	}
+	log.Println("✅ [OAuth] JWT tokens generated")
 
 	// Set JWT tokens in HTTP-only cookies with SameSite=None for cross-origin
 	// Note: SameSite=None requires Secure=true (HTTPS only)
 	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("access_token=%s; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=None", tokens.AccessToken))
 	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("refresh_token=%s; Path=/; Max-Age=%d; HttpOnly; Secure; SameSite=None", tokens.RefreshToken, 86400*7))
+	log.Println("✅ [OAuth] Cookies set, redirecting to frontend")
 
 	// Redirect to frontend
 	c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/?login=success")
