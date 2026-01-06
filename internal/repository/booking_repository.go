@@ -22,7 +22,7 @@ func (r *BookingRepository) Create(booking *model.Booking) error {
 
 func (r *BookingRepository) GetByID(id uint) (*model.Booking, error) {
 	var booking model.Booking
-	err := r.db.Preload("User").Preload("Service").Preload("Stylist").First(&booking, id).Error
+	err := r.db.Preload("User").Preload("Stylist").First(&booking, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -44,7 +44,7 @@ func (r *BookingRepository) List(userID *uint, status string, startDate, endDate
 	var bookings []model.Booking
 	var total int64
 
-	query := r.db.Model(&model.Booking{}).Preload("User").Preload("Service").Preload("Stylist")
+	query := r.db.Model(&model.Booking{}).Preload("User").Preload("Stylist")
 
 	if userID != nil {
 		query = query.Where("user_id = ?", *userID)
@@ -75,7 +75,7 @@ func (r *BookingRepository) List(userID *uint, status string, startDate, endDate
 
 func (r *BookingRepository) GetUserBookings(userID uint, upcoming bool) ([]model.Booking, error) {
 	var bookings []model.Booking
-	query := r.db.Preload("Service").Preload("Stylist").
+	query := r.db.Preload("Stylist").
 		Where("user_id = ?", userID)
 
 	if upcoming {
@@ -90,7 +90,7 @@ func (r *BookingRepository) GetUserBookings(userID uint, upcoming bool) ([]model
 
 func (r *BookingRepository) GetByDate(date time.Time) ([]model.Booking, error) {
 	var bookings []model.Booking
-	err := r.db.Preload("User").Preload("Service").Preload("Stylist").
+	err := r.db.Preload("User").Preload("Stylist").
 		Where("booking_date = ?", date.Format("2006-01-02")).
 		Order("start_time").
 		Find(&bookings).Error
@@ -99,7 +99,7 @@ func (r *BookingRepository) GetByDate(date time.Time) ([]model.Booking, error) {
 
 func (r *BookingRepository) GetByStylistAndDate(stylistID uint, date time.Time) ([]model.Booking, error) {
 	var bookings []model.Booking
-	err := r.db.Preload("User").Preload("Service").
+	err := r.db.Preload("User").
 		Where("stylist_id = ? AND booking_date = ? AND status IN ?",
 			stylistID, date.Format("2006-01-02"),
 			[]string{model.BookingStatusPending, model.BookingStatusConfirmed}).
@@ -110,7 +110,7 @@ func (r *BookingRepository) GetByStylistAndDate(stylistID uint, date time.Time) 
 
 func (r *BookingRepository) GetByStylistAndDateString(stylistID uint, dateStr string) ([]model.Booking, error) {
 	var bookings []model.Booking
-	err := r.db.Preload("User").Preload("Service").
+	err := r.db.Preload("User").
 		Where("stylist_id = ? AND booking_date = ? AND status IN ?",
 			stylistID, dateStr,
 			[]string{model.BookingStatusPending, model.BookingStatusConfirmed}).
