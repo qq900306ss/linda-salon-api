@@ -178,6 +178,7 @@ func (r *BookingRepository) GetPopularServices(limit int, startDate, endDate tim
 		WHERE booking_date BETWEEN ? AND ?
 		AND services IS NOT NULL
 		AND jsonb_array_length(services) > 0
+		AND deleted_at IS NULL
 		GROUP BY service->>'name'
 		ORDER BY count DESC
 		LIMIT ?
