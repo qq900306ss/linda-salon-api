@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,11 +34,11 @@ func NewBookingHandler(
 }
 
 type CreateBookingRequest struct {
-	ServiceID uint   `json:"service_id" binding:"required"`
-	StylistID uint   `json:"stylist_id" binding:"required"`
-	Date      string `json:"date" binding:"required"` // YYYY-MM-DD
-	StartTime string `json:"start_time" binding:"required"` // HH:MM
-	Notes     string `json:"notes"`
+	ServiceIDs []uint `json:"service_ids" binding:"required,min=1"` // 支援多個服務
+	StylistID  uint   `json:"stylist_id" binding:"required"`
+	Date       string `json:"date" binding:"required"` // YYYY-MM-DD
+	StartTime  string `json:"start_time" binding:"required"` // HH:MM
+	Notes      string `json:"notes"`
 }
 
 type UpdateBookingRequest struct {
@@ -160,11 +161,27 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		return
 	}
 
-	// Get service info
-	service, err := h.serviceRepo.GetByID(req.ServiceID)
-	if err != nil || service == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid service"})
-		return
+	// Get all services info and calculate total duration and price
+	var services []model.BookingServiceItem
+	var totalDuration int
+	var totalPrice int
+
+	for _, serviceID := range req.ServiceIDs {
+		service, err := h.serviceRepo.GetByID(serviceID)
+		if err != nil || service == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid service ID: %d", serviceID)})
+			return
+		}
+
+		services = append(services, model.BookingServiceItem{
+			ID:       service.ID,
+			Name:     service.Name,
+			Price:    service.Price,
+			Duration: service.Duration,
+		})
+
+		totalDuration += service.Duration
+		totalPrice += service.Price
 	}
 
 	// Get stylist info
@@ -181,10 +198,10 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		return
 	}
 
-	// Calculate end time
+	// Calculate end time based on total duration
 	startHour, _ := strconv.Atoi(req.StartTime[:2])
 	startMin, _ := strconv.Atoi(req.StartTime[3:5])
-	endMin := startMin + service.Duration
+	endMin := startMin + totalDuration
 	endHour := startHour + (endMin / 60)
 	endMin = endMin % 60
 	endTime := time.Date(0, 0, 0, endHour, endMin, 0, 0, time.UTC).Format("15:04")
@@ -209,13 +226,13 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 	// Create booking
 	booking := &model.Booking{
 		UserID:        userID,
-		ServiceID:     req.ServiceID,
 		StylistID:     req.StylistID,
+		Services:      services,
 		BookingDate:   bookingDate,
 		StartTime:     req.StartTime,
 		EndTime:       endTime,
-		Duration:      service.Duration,
-		Price:         service.Price,
+		Duration:      totalDuration,
+		Price:         totalPrice,
 		Status:        model.BookingStatusPending,
 		Notes:         req.Notes,
 		CustomerName:  user.Name,

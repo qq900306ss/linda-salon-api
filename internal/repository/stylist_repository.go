@@ -113,9 +113,9 @@ func (r *StylistRepository) GetTopStylists(limit int, startDate, endDate time.Ti
 	var results []map[string]interface{}
 
 	err := r.db.Model(&model.Stylist{}).
-		Select("stylists.id, stylists.name, COUNT(bookings.id) as booking_count, SUM(bookings.price) as revenue").
-		Joins("LEFT JOIN bookings ON bookings.stylist_id = stylists.id AND bookings.status = ? AND bookings.booking_date BETWEEN ? AND ?",
-			model.BookingStatusCompleted, startDate, endDate).
+		Select("stylists.id, stylists.name, COUNT(bookings.id) as booking_count, SUM(CASE WHEN bookings.status = ? THEN bookings.price ELSE 0 END) as revenue").
+		Joins("LEFT JOIN bookings ON bookings.stylist_id = stylists.id AND bookings.status IN (?, ?, ?) AND bookings.booking_date BETWEEN ? AND ?",
+			model.BookingStatusCompleted, model.BookingStatusPending, model.BookingStatusConfirmed, model.BookingStatusCompleted, startDate, endDate).
 		Where("stylists.is_active = ?", true).
 		Group("stylists.id, stylists.name").
 		Order("booking_count DESC").

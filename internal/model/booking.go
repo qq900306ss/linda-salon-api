@@ -6,6 +6,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// BookingServiceItem represents a service item in a booking (stored in JSONB)
+type BookingServiceItem struct {
+	ID       uint   `json:"id"`
+	Name     string `json:"name"`
+	Price    int    `json:"price"`
+	Duration int    `json:"duration"`
+}
+
 type Booking struct {
 	ID        uint           `gorm:"primarykey" json:"id"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -14,13 +22,14 @@ type Booking struct {
 
 	// Foreign Keys
 	UserID    uint `gorm:"not null;index" json:"user_id"`
-	ServiceID uint `gorm:"not null;index" json:"service_id"`
 	StylistID uint `gorm:"not null;index" json:"stylist_id"`
 
 	// Relationships
 	User    User    `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	Service Service `gorm:"foreignKey:ServiceID" json:"service,omitempty"`
 	Stylist Stylist `gorm:"foreignKey:StylistID" json:"stylist,omitempty"`
+
+	// Multiple Services (JSONB) - replaces service_id
+	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json;not null" json:"services"`
 
 	// Booking Details
 	BookingDate time.Time `gorm:"not null;index" json:"booking_date"`

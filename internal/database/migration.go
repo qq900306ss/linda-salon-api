@@ -31,12 +31,12 @@ var migrationList = []struct {
 		name:    "make_user_fields_nullable",
 		fn:      migrations.V1MakeUserFieldsNullable,
 	},
+	{
+		version: "v2",
+		name:    "migrate_services_to_jsonb",
+		fn:      migrations.V2MigrateServicesToJSONB,
+	},
 	// Add new migrations here in order
-	// {
-	//     version: "v2",
-	//     name:    "add_new_table",
-	//     fn:      migrations.V2AddNewTable,
-	// },
 }
 
 // RunMigrations runs all pending migrations
