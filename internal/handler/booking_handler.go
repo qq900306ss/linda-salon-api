@@ -200,6 +200,12 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		return
 	}
 
+	// Get customer phone, use empty string if nil
+	customerPhone := ""
+	if user.Phone != nil {
+		customerPhone = *user.Phone
+	}
+
 	// Create booking
 	booking := &model.Booking{
 		UserID:        userID,
@@ -213,7 +219,7 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		Status:        model.BookingStatusPending,
 		Notes:         req.Notes,
 		CustomerName:  user.Name,
-		CustomerPhone: user.Phone,
+		CustomerPhone: customerPhone,
 		CustomerEmail: user.Email,
 	}
 

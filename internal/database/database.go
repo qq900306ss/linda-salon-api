@@ -46,7 +46,7 @@ func New(cfg *config.DatabaseConfig) (*Database, error) {
 }
 
 func (d *Database) AutoMigrate() error {
-	log.Println("🔄 Running database migrations...")
+	log.Println("🔄 Running GORM auto-migrations...")
 
 	err := d.DB.AutoMigrate(
 		&model.User{},
@@ -56,43 +56,16 @@ func (d *Database) AutoMigrate() error {
 		&model.Booking{},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return fmt.Errorf("failed to run auto-migrations: %w", err)
 	}
 
-	// Manual migration: Make phone, google_id, and line_id nullable
-	log.Println("🔄 Running manual migrations for nullable fields...")
+	log.Println("✅ GORM auto-migrations completed")
 
-	// Check if phone column needs to be made nullable
-	var phoneNullable string
-	d.DB.Raw("SELECT is_nullable FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'phone'").Scan(&phoneNullable)
-	if phoneNullable == "NO" {
-		log.Println("  - Making phone column nullable")
-		if err := d.DB.Exec("ALTER TABLE users ALTER COLUMN phone DROP NOT NULL").Error; err != nil {
-			log.Printf("⚠️  Warning: Failed to make phone nullable: %v", err)
-		}
+	// Run custom migrations
+	if err := d.RunMigrations(); err != nil {
+		return fmt.Errorf("failed to run custom migrations: %w", err)
 	}
 
-	// Check if google_id column needs to be made nullable
-	var googleIDNullable string
-	d.DB.Raw("SELECT is_nullable FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'google_id'").Scan(&googleIDNullable)
-	if googleIDNullable == "NO" {
-		log.Println("  - Making google_id column nullable")
-		if err := d.DB.Exec("ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL").Error; err != nil {
-			log.Printf("⚠️  Warning: Failed to make google_id nullable: %v", err)
-		}
-	}
-
-	// Check if line_id column needs to be made nullable
-	var lineIDNullable string
-	d.DB.Raw("SELECT is_nullable FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'line_id'").Scan(&lineIDNullable)
-	if lineIDNullable == "NO" {
-		log.Println("  - Making line_id column nullable")
-		if err := d.DB.Exec("ALTER TABLE users ALTER COLUMN line_id DROP NOT NULL").Error; err != nil {
-			log.Printf("⚠️  Warning: Failed to make line_id nullable: %v", err)
-		}
-	}
-
-	log.Println("✅ Database migrations completed")
 	return nil
 }
 
