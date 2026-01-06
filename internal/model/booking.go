@@ -33,7 +33,7 @@ type Booking struct {
 
 	// Multiple Services (JSONB) - replaces service_id
 	// Note: Temporarily nullable to allow migration, will be set to NOT NULL by V2 migration
-	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json" json:"services"`
+	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json;default:null" json:"services"`
 
 	// Booking Details
 	BookingDate time.Time `gorm:"not null;index" json:"booking_date"`
