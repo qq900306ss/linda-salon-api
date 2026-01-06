@@ -41,9 +41,29 @@ func V2MigrateServicesToJSONB(tx *gorm.DB) error {
 		}
 
 		// Get service details
-		if err := tx.Raw("SELECT id, name, price, duration FROM services WHERE id = ?", booking.ServiceID).Scan(&service).Error; err != nil {
-			log.Printf("    - Warning: Could not find service with id %d for booking %d", booking.ServiceID, booking.ID)
-			continue
+		err := tx.Raw("SELECT id, name, price, duration FROM services WHERE id = ?", booking.ServiceID).Scan(&service).Error
+		if err != nil || service.ID == 0 {
+			// If service not found, create a placeholder with booking data
+			log.Printf("    - Warning: Could not find service with id %d for booking %d, using placeholder", booking.ServiceID, booking.ID)
+
+			// Get price and duration from booking record
+			var bookingData struct {
+				Price    int
+				Duration int
+			}
+			tx.Raw("SELECT price, duration FROM bookings WHERE id = ?", booking.ID).Scan(&bookingData)
+
+			service = struct {
+				ID       uint
+				Name     string
+				Price    int
+				Duration int
+			}{
+				ID:       booking.ServiceID,
+				Name:     "未知服務",
+				Price:    bookingData.Price,
+				Duration: bookingData.Duration,
+			}
 		}
 
 		// Create JSONB array with single service
