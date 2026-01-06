@@ -458,3 +458,218 @@ func (h *AuthHandler) getGoogleUserInfo(accessToken string) (*GoogleUserInfo, er
 
 	return &userInfo, nil
 }
+
+// LINE Login Structures
+type LineUserInfo struct {
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
+	PictureURL  string `json:"pictureUrl"`
+	StatusMessage string `json:"statusMessage"`
+}
+
+// LineLoginURL godoc
+// @Summary Get LINE OAuth login URL
+// @Tags auth
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /auth/line/login [get]
+func (h *AuthHandler) LineLoginURL(c *gin.Context) {
+	// Generate random state for CSRF protection
+	b := make([]byte, 32)
+	rand.Read(b)
+	state := base64.URLEncoding.EncodeToString(b)
+
+	log.Printf("🔑 [LINE OAuth] Generated state: %s", state)
+
+	// Build LINE OAuth URL
+	clientID := os.Getenv("LINE_CHANNEL_ID")
+	redirectURI := os.Getenv("LINE_REDIRECT_URL")
+
+	params := url.Values{}
+	params.Add("response_type", "code")
+	params.Add("client_id", clientID)
+	params.Add("redirect_uri", redirectURI)
+	params.Add("state", state)
+	params.Add("scope", "profile openid email")
+
+	authURL := fmt.Sprintf("https://access.line.me/oauth2/v2.1/authorize?%s", params.Encode())
+
+	log.Printf("✅ [LINE OAuth] Returning LINE OAuth URL")
+
+	c.JSON(http.StatusOK, gin.H{
+		"url":   authURL,
+		"state": state,
+	})
+}
+
+// LineCallback godoc
+// @Summary Handle LINE OAuth callback
+// @Tags auth
+// @Produce json
+// @Param state query string true "OAuth state"
+// @Param code query string true "OAuth code"
+// @Success 302 {string} string "Redirect to frontend"
+// @Router /auth/line/callback [get]
+func (h *AuthHandler) LineCallback(c *gin.Context) {
+	log.Println("🔐 [LINE OAuth] LINE callback received")
+
+	// Get state from query parameter
+	state := c.Query("state")
+	if state == "" {
+		log.Printf("❌ [LINE OAuth] State parameter is missing")
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=invalid_state")
+		return
+	}
+
+	log.Printf("✅ [LINE OAuth] State received: %s", state)
+
+	// Exchange code for token
+	code := c.Query("code")
+	log.Printf("🔄 [LINE OAuth] Exchanging code for access token...")
+	accessToken, err := h.exchangeLineCodeForToken(code)
+	if err != nil {
+		log.Printf("❌ [LINE OAuth] Token exchange failed: %v", err)
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_exchange_failed")
+		return
+	}
+	log.Println("✅ [LINE OAuth] Access token obtained")
+
+	// Get user info from LINE
+	log.Printf("👤 [LINE OAuth] Fetching user info from LINE...")
+	lineUser, err := h.getLineUserInfo(accessToken)
+	if err != nil {
+		log.Printf("❌ [LINE OAuth] Failed to get user info: %v", err)
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=userinfo_failed")
+		return
+	}
+	log.Printf("✅ [LINE OAuth] User info received: displayName=%s, userId=%s", lineUser.DisplayName, lineUser.UserID)
+
+	// Check if user already exists by LINE ID
+	log.Printf("🔍 [LINE OAuth] Checking if user exists with LINE ID: %s", lineUser.UserID)
+	user, err := h.userRepo.GetByLineID(lineUser.UserID)
+	if err != nil {
+		log.Printf("❌ [LINE OAuth] Database error checking LINE ID: %v", err)
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=db_error")
+		return
+	}
+
+	// If user doesn't exist, create new user
+	if user == nil {
+		log.Printf("➕ [LINE OAuth] Creating new user: %s (LINE ID: %s)", lineUser.DisplayName, lineUser.UserID)
+
+		// LINE 不一定有 email，所以使用 LINE ID 建立假的 email
+		email := fmt.Sprintf("line_%s@lineid.local", lineUser.UserID)
+
+		user = &model.User{
+			Name:     lineUser.DisplayName,
+			Email:    email,
+			Phone:    nil,
+			LineID:   &lineUser.UserID,
+			Avatar:   lineUser.PictureURL,
+			Role:     "customer",
+		}
+
+		// For OAuth users, set a random unguessable password hash
+		if err := user.HashPassword("oauth_line_" + lineUser.UserID); err != nil {
+			log.Printf("❌ [LINE OAuth] Failed to hash password: %v", err)
+			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=hash_failed")
+			return
+		}
+
+		if err := h.userRepo.Create(user); err != nil {
+			log.Printf("❌ [LINE OAuth] Failed to create user: %v", err)
+			c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=create_failed")
+			return
+		}
+		log.Printf("✅ [LINE OAuth] New user created with ID: %d", user.ID)
+	} else {
+		log.Printf("✅ [LINE OAuth] Existing user found with ID: %d", user.ID)
+	}
+
+	// Generate JWT tokens
+	log.Printf("🔑 [LINE OAuth] Generating JWT tokens for user ID: %d", user.ID)
+	tokens, err := h.jwtManager.GenerateTokenPair(user.ID, user.Email, user.Role)
+	if err != nil {
+		log.Printf("❌ [LINE OAuth] Failed to generate tokens: %v", err)
+		c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/login?error=token_failed")
+		return
+	}
+	log.Println("✅ [LINE OAuth] JWT tokens generated")
+
+	// Set JWT tokens in HTTP-only cookies
+	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("access_token=%s; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=None", tokens.AccessToken))
+	c.Writer.Header().Add("Set-Cookie", fmt.Sprintf("refresh_token=%s; Path=/; Max-Age=%d; HttpOnly; Secure; SameSite=None", tokens.RefreshToken, 86400*7))
+	log.Println("✅ [LINE OAuth] Cookies set, redirecting to frontend")
+
+	// Redirect to frontend
+	c.Redirect(http.StatusTemporaryRedirect, os.Getenv("FRONTEND_URL")+"/?login=success")
+}
+
+// Helper function to exchange LINE authorization code for access token
+func (h *AuthHandler) exchangeLineCodeForToken(code string) (string, error) {
+	clientID := os.Getenv("LINE_CHANNEL_ID")
+	clientSecret := os.Getenv("LINE_CHANNEL_SECRET")
+	redirectURI := os.Getenv("LINE_REDIRECT_URL")
+
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", code)
+	data.Set("redirect_uri", redirectURI)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+
+	resp, err := http.PostForm("https://api.line.me/oauth2/v2.1/token", data)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope"`
+		IDToken      string `json:"id_token"`
+	}
+
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", err
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
+// Helper function to get user info from LINE
+func (h *AuthHandler) getLineUserInfo(accessToken string) (*LineUserInfo, error) {
+	req, err := http.NewRequest("GET", "https://api.line.me/v2/profile", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var userInfo LineUserInfo
+	if err := json.Unmarshal(body, &userInfo); err != nil {
+		return nil, err
+	}
+
+	return &userInfo, nil
+}
