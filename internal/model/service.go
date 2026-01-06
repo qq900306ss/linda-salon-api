@@ -19,8 +19,4 @@ type Service struct {
 	Duration    int    `gorm:"not null" json:"duration"` // in minutes
 	ImageURL    string `gorm:"type:varchar(500)" json:"image_url"`
 	IsActive    bool   `gorm:"default:true" json:"is_active"`
-
-	// Relationships
-	// Note: Removed Bookings relationship since services are now stored as JSONB in bookings table
-	// Bookings []Booking `gorm:"foreignKey:ServiceID" json:"bookings,omitempty"`
 }
