@@ -147,6 +147,7 @@ func setupRouter(
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/logout", authHandler.Logout)
 			auth.POST("/refresh", authHandler.RefreshToken)
 			auth.GET("/google/login", authHandler.GoogleLoginURL)
 			auth.GET("/google/callback", authHandler.GoogleCallback)

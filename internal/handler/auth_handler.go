@@ -230,6 +230,23 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// Logout godoc
+// @Summary Logout user
+// @Tags auth
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /auth/logout [post]
+func (h *AuthHandler) Logout(c *gin.Context) {
+	// Clear cookies by setting Max-Age to 0
+	c.Writer.Header().Add("Set-Cookie", "access_token=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None")
+	c.Writer.Header().Add("Set-Cookie", "refresh_token=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None")
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Logged out successfully",
+	})
+}
+
 // GoogleLoginURL godoc
 // @Summary Get Google OAuth login URL
 // @Tags auth
