@@ -21,5 +21,6 @@ type Service struct {
 	IsActive    bool   `gorm:"default:true" json:"is_active"`
 
 	// Relationships
-	Bookings []Booking `gorm:"foreignKey:ServiceID" json:"bookings,omitempty"`
+	// Note: Removed Bookings relationship since services are now stored as JSONB in bookings table
+	// Bookings []Booking `gorm:"foreignKey:ServiceID" json:"bookings,omitempty"`
 }

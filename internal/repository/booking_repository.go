@@ -164,15 +164,23 @@ func (r *BookingRepository) GetRevenueByDay(startDate, endDate time.Time) ([]map
 }
 
 func (r *BookingRepository) GetPopularServices(limit int, startDate, endDate time.Time) ([]map[string]interface{}, error) {
+	// Since services are now stored as JSONB array in bookings, we need to:
+	// 1. Extract service items from the JSONB array
+	// 2. Count each service across all bookings
 	var results []map[string]interface{}
-	err := r.db.Model(&model.Booking{}).
-		Select("services.name, COUNT(bookings.id) as count").
-		Joins("JOIN services ON services.id = bookings.service_id").
-		Where("bookings.booking_date BETWEEN ? AND ?", startDate, endDate).
-		Group("services.name").
-		Order("count DESC").
-		Limit(limit).
-		Find(&results).Error
 
+	query := `
+		SELECT
+			service->>'name' as name,
+			COUNT(*) as count
+		FROM bookings,
+		jsonb_array_elements(services) as service
+		WHERE booking_date BETWEEN ? AND ?
+		GROUP BY service->>'name'
+		ORDER BY count DESC
+		LIMIT ?
+	`
+
+	err := r.db.Raw(query, startDate, endDate, limit).Scan(&results).Error
 	return results, err
 }
