@@ -29,7 +29,8 @@ type Booking struct {
 	Stylist Stylist `gorm:"foreignKey:StylistID" json:"stylist,omitempty"`
 
 	// Multiple Services (JSONB) - replaces service_id
-	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json;not null" json:"services"`
+	// Note: Temporarily nullable to allow migration, will be set to NOT NULL by V2 migration
+	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json" json:"services"`
 
 	// Booking Details
 	BookingDate time.Time `gorm:"not null;index" json:"booking_date"`
