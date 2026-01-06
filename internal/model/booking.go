@@ -28,6 +28,9 @@ type Booking struct {
 	User    User    `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Stylist Stylist `gorm:"foreignKey:StylistID" json:"stylist,omitempty"`
 
+	// Legacy field - will be removed after migration
+	ServiceID *uint `gorm:"index" json:"-"`
+
 	// Multiple Services (JSONB) - replaces service_id
 	// Note: Temporarily nullable to allow migration, will be set to NOT NULL by V2 migration
 	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json" json:"services"`
