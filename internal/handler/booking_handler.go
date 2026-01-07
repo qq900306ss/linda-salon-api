@@ -34,11 +34,14 @@ func NewBookingHandler(
 }
 
 type CreateBookingRequest struct {
-	ServiceIDs []uint `json:"service_ids" binding:"required,min=1"` // 支援多個服務
-	StylistID  uint   `json:"stylist_id" binding:"required"`
-	Date       string `json:"date" binding:"required"` // YYYY-MM-DD
-	StartTime  string `json:"start_time" binding:"required"` // HH:MM
-	Notes      string `json:"notes"`
+	ServiceIDs    []uint `json:"service_ids" binding:"required,min=1"` // 支援多個服務
+	StylistID     uint   `json:"stylist_id" binding:"required"`
+	Date          string `json:"date" binding:"required"`     // YYYY-MM-DD
+	StartTime     string `json:"start_time" binding:"required"` // HH:MM
+	Notes         string `json:"notes"`
+	CustomerName  string `json:"customer_name"`  // 可選：覆蓋用戶姓名
+	CustomerPhone string `json:"customer_phone"` // 可選：覆蓋用戶電話
+	CustomerEmail string `json:"customer_email"` // 可選：覆蓋用戶信箱
 }
 
 type UpdateBookingRequest struct {
@@ -217,10 +220,20 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		return
 	}
 
-	// Get customer phone, use empty string if nil
-	customerPhone := ""
-	if user.Phone != nil {
+	// 準備客戶資訊（優先使用前端傳來的，否則用資料庫的）
+	customerName := req.CustomerName
+	if customerName == "" {
+		customerName = user.Name
+	}
+
+	customerPhone := req.CustomerPhone
+	if customerPhone == "" && user.Phone != nil {
 		customerPhone = *user.Phone
+	}
+
+	customerEmail := req.CustomerEmail
+	if customerEmail == "" {
+		customerEmail = user.Email
 	}
 
 	// Create booking
@@ -235,9 +248,9 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		Price:         totalPrice,
 		Status:        model.BookingStatusPending,
 		Notes:         req.Notes,
-		CustomerName:  user.Name,
+		CustomerName:  customerName,
 		CustomerPhone: customerPhone,
-		CustomerEmail: user.Email,
+		CustomerEmail: customerEmail,
 	}
 
 	if err := h.bookingRepo.Create(booking); err != nil {
