@@ -75,9 +75,10 @@ func main() {
 	bookingHandler := handler.NewBookingHandler(bookingRepo, serviceRepo, stylistRepo, userRepo)
 	statsHandler := handler.NewStatisticsHandler(bookingRepo, stylistRepo)
 	uploadHandler := handler.NewUploadHandler(s3Client, &cfg.AWS)
+	userHandler := handler.NewUserHandler(userRepo, bookingRepo)
 
 	// Setup router
-	router := setupRouter(cfg, jwtManager, authHandler, serviceHandler, stylistHandler, bookingHandler, statsHandler, uploadHandler)
+	router := setupRouter(cfg, jwtManager, authHandler, serviceHandler, stylistHandler, bookingHandler, statsHandler, uploadHandler, userHandler)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
@@ -123,6 +124,7 @@ func setupRouter(
 	bookingHandler *handler.BookingHandler,
 	statsHandler *handler.StatisticsHandler,
 	uploadHandler *handler.UploadHandler,
+	userHandler *handler.UserHandler,
 ) *gin.Engine {
 	router := gin.New()
 
@@ -216,6 +218,11 @@ func setupRouter(
 			// Statistics
 			admin.GET("/statistics/dashboard", statsHandler.GetDashboardStats)
 			admin.GET("/statistics/revenue", statsHandler.GetRevenueReport)
+
+			// User management
+			admin.GET("/users", userHandler.ListUsers)
+			admin.GET("/users/:id", userHandler.GetUser)
+			admin.GET("/users/:id/bookings", userHandler.GetUserBookings)
 
 			// Upload management
 			admin.DELETE("/upload/image", uploadHandler.DeleteImage)
