@@ -54,6 +54,7 @@ func (d *Database) AutoMigrate() error {
 		&model.Stylist{},
 		&model.StylistSchedule{},
 		&model.Booking{},
+		&model.Settings{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run auto-migrations: %w", err)

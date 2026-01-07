@@ -67,6 +67,7 @@ func main() {
 	serviceRepo := repository.NewServiceRepository(db.DB)
 	stylistRepo := repository.NewStylistRepository(db.DB)
 	bookingRepo := repository.NewBookingRepository(db.DB)
+	settingsRepo := repository.NewSettingsRepository(db.DB)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(userRepo, jwtManager)
@@ -76,9 +77,10 @@ func main() {
 	statsHandler := handler.NewStatisticsHandler(bookingRepo, stylistRepo)
 	uploadHandler := handler.NewUploadHandler(s3Client, &cfg.AWS)
 	userHandler := handler.NewUserHandler(userRepo, bookingRepo)
+	settingsHandler := handler.NewSettingsHandler(settingsRepo)
 
 	// Setup router
-	router := setupRouter(cfg, jwtManager, authHandler, serviceHandler, stylistHandler, bookingHandler, statsHandler, uploadHandler, userHandler)
+	router := setupRouter(cfg, jwtManager, authHandler, serviceHandler, stylistHandler, bookingHandler, statsHandler, uploadHandler, userHandler, settingsHandler)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
@@ -125,6 +127,7 @@ func setupRouter(
 	statsHandler *handler.StatisticsHandler,
 	uploadHandler *handler.UploadHandler,
 	userHandler *handler.UserHandler,
+	settingsHandler *handler.SettingsHandler,
 ) *gin.Engine {
 	router := gin.New()
 
@@ -141,9 +144,19 @@ func setupRouter(
 		})
 	})
 
+	// PWA Manifest (public)
+	router.GET("/manifest.json", settingsHandler.GetManifest)
+
 	// API v1
 	v1 := router.Group("/api/v1")
 	{
+		// Public settings routes
+		settings := v1.Group("/settings")
+		{
+			settings.GET("/branding", settingsHandler.GetBranding)
+			settings.GET("/pwa/icons", settingsHandler.GetPWAIcons)
+		}
+
 		// Public routes
 		auth := v1.Group("/auth")
 		{
@@ -226,6 +239,10 @@ func setupRouter(
 
 			// Upload management
 			admin.DELETE("/upload/image", uploadHandler.DeleteImage)
+
+			// Settings management
+			admin.PUT("/settings/branding", settingsHandler.UpdateBranding)
+			admin.PUT("/settings/pwa/icons", settingsHandler.UpdatePWAIcons)
 		}
 	}
 

@@ -66,10 +66,13 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 	// Get folder from query or default to 'uploads'
 	folder := c.DefaultQuery("folder", "uploads")
 	validFolders := map[string]bool{
-		"services": true,
-		"stylists": true,
-		"avatars":  true,
-		"uploads":  true,
+		"services":    true,
+		"stylists":    true,
+		"avatars":     true,
+		"uploads":     true,
+		"icons":       true,
+		"logos":       true,
+		"screenshots": true,
 	}
 	if !validFolders[folder] {
 		folder = "uploads"
