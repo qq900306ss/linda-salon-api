@@ -1,126 +1,101 @@
 package repository
 
 import (
-	"errors"
-	"time"
+	"context"
+	"fmt"
+	"sort"
 
-	"gorm.io/gorm"
-	"linda-salon-api/internal/model"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"github.com/qq900306ss/linda-salon-api/internal/database"
+	"github.com/qq900306ss/linda-salon-api/internal/model"
 )
 
+// StylistRepository persists model.Stylist items.
 type StylistRepository struct {
-	db *gorm.DB
+	db *database.Client
 }
 
-func NewStylistRepository(db *gorm.DB) *StylistRepository {
+// NewStylistRepository creates a StylistRepository.
+func NewStylistRepository(db *database.Client) *StylistRepository {
 	return &StylistRepository{db: db}
 }
 
-func (r *StylistRepository) Create(stylist *model.Stylist) error {
-	return r.db.Create(stylist).Error
+// List returns all stylists (optionally only active ones), sorted by name.
+func (r *StylistRepository) List(ctx context.Context, activeOnly bool) ([]model.Stylist, error) {
+	out, err := r.db.DB.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String(r.db.Tables.Stylists),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan stylists: %w", err)
+	}
+	var stylists []model.Stylist
+	if err := attributevalue.UnmarshalListOfMaps(out.Items, &stylists); err != nil {
+		return nil, fmt.Errorf("unmarshal stylists: %w", err)
+	}
+	result := make([]model.Stylist, 0, len(stylists))
+	for i := range stylists {
+		if activeOnly && !stylists[i].IsActive {
+			continue
+		}
+		stylists[i].Normalize()
+		result = append(result, stylists[i])
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
 }
 
-func (r *StylistRepository) GetByID(id uint) (*model.Stylist, error) {
-	var stylist model.Stylist
-	err := r.db.Preload("Schedules").First(&stylist, id).Error
+// GetByID returns a stylist by id, or nil if not found.
+func (r *StylistRepository) GetByID(ctx context.Context, id string) (*model.Stylist, error) {
+	out, err := r.db.DB.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(r.db.Tables.Stylists),
+		Key: map[string]dbtypes.AttributeValue{
+			"id": &dbtypes.AttributeValueMemberS{Value: id},
+		},
+	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
+		return nil, fmt.Errorf("get stylist %s: %w", id, err)
 	}
+	if out.Item == nil {
+		return nil, nil
+	}
+	var stylist model.Stylist
+	if err := attributevalue.UnmarshalMap(out.Item, &stylist); err != nil {
+		return nil, fmt.Errorf("unmarshal stylist %s: %w", id, err)
+	}
+	stylist.Normalize()
 	return &stylist, nil
 }
 
-func (r *StylistRepository) Update(stylist *model.Stylist) error {
-	return r.db.Save(stylist).Error
-}
-
-func (r *StylistRepository) Delete(id uint) error {
-	return r.db.Delete(&model.Stylist{}, id).Error
-}
-
-func (r *StylistRepository) List(activeOnly bool) ([]model.Stylist, error) {
-	var stylists []model.Stylist
-	query := r.db.Preload("Schedules")
-
-	if activeOnly {
-		query = query.Where("is_active = ?", true)
-	}
-
-	err := query.Order("name").Find(&stylists).Error
-	return stylists, err
-}
-
-// Schedule management
-func (r *StylistRepository) CreateSchedule(schedule *model.StylistSchedule) error {
-	return r.db.Create(schedule).Error
-}
-
-func (r *StylistRepository) UpdateSchedule(schedule *model.StylistSchedule) error {
-	return r.db.Save(schedule).Error
-}
-
-func (r *StylistRepository) DeleteSchedule(id uint) error {
-	return r.db.Delete(&model.StylistSchedule{}, id).Error
-}
-
-func (r *StylistRepository) GetSchedulesByStylistID(stylistID uint) ([]model.StylistSchedule, error) {
-	var schedules []model.StylistSchedule
-	err := r.db.Where("stylist_id = ? AND is_active = ?", stylistID, true).
-		Order("day_of_week, start_time").
-		Find(&schedules).Error
-	return schedules, err
-}
-
-// Check if stylist is available at given time
-func (r *StylistRepository) IsAvailable(stylistID uint, date time.Time, startTime, endTime string) (bool, error) {
-	dayOfWeek := int(date.Weekday())
-
-	// Check if stylist has schedule for this day
-	var schedule model.StylistSchedule
-	err := r.db.Where("stylist_id = ? AND day_of_week = ? AND is_active = ?", stylistID, dayOfWeek, true).
-		First(&schedule).Error
+// Put creates or replaces a stylist.
+func (r *StylistRepository) Put(ctx context.Context, stylist *model.Stylist) error {
+	av, err := attributevalue.MarshalMap(stylist)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
-		return false, err
+		return fmt.Errorf("marshal stylist: %w", err)
 	}
-
-	// Check if requested time is within schedule
-	if startTime < schedule.StartTime || endTime > schedule.EndTime {
-		return false, nil
-	}
-
-	// Check for conflicting bookings
-	var count int64
-	err = r.db.Model(&model.Booking{}).
-		Where("stylist_id = ? AND booking_date = ? AND status IN ?",
-			stylistID, date.Format("2006-01-02"), []string{"pending", "confirmed"}).
-		Where("NOT (end_time <= ? OR start_time >= ?)", startTime, endTime).
-		Count(&count).Error
-
+	_, err = r.db.DB.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(r.db.Tables.Stylists),
+		Item:      av,
+	})
 	if err != nil {
-		return false, err
+		return fmt.Errorf("put stylist: %w", err)
 	}
-
-	return count == 0, nil
+	return nil
 }
 
-// Get top stylists by booking count
-func (r *StylistRepository) GetTopStylists(limit int, startDate, endDate time.Time) ([]map[string]interface{}, error) {
-	var results []map[string]interface{}
-
-	err := r.db.Model(&model.Stylist{}).
-		Select("stylists.id, stylists.name, COUNT(bookings.id) as booking_count, SUM(CASE WHEN bookings.status = 'completed' THEN bookings.price ELSE 0 END) as revenue").
-		Joins("LEFT JOIN bookings ON bookings.stylist_id = stylists.id AND bookings.status IN (?, ?, ?) AND bookings.booking_date BETWEEN ? AND ? AND bookings.deleted_at IS NULL",
-			model.BookingStatusPending, model.BookingStatusConfirmed, model.BookingStatusCompleted, startDate, endDate).
-		Where("stylists.is_active = ? AND stylists.deleted_at IS NULL", true).
-		Group("stylists.id, stylists.name").
-		Order("booking_count DESC").
-		Limit(limit).
-		Find(&results).Error
-
-	return results, err
+// Delete removes a stylist by id.
+func (r *StylistRepository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(r.db.Tables.Stylists),
+		Key: map[string]dbtypes.AttributeValue{
+			"id": &dbtypes.AttributeValueMemberS{Value: id},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("delete stylist %s: %w", id, err)
+	}
+	return nil
 }

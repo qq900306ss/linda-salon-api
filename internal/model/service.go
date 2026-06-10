@@ -1,22 +1,14 @@
 package model
 
-import (
-	"time"
-
-	"gorm.io/gorm"
-)
-
+// Service represents a salon service item (e.g. haircut, perm).
 type Service struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-
-	Name        string `gorm:"type:varchar(100);not null" json:"name"`
-	Description string `gorm:"type:text" json:"description"`
-	Category    string `gorm:"type:varchar(50);not null" json:"category"` // haircut, coloring, treatment, styling, perm
-	Price       int    `gorm:"not null" json:"price"`
-	Duration    int    `gorm:"not null" json:"duration"` // in minutes
-	ImageURL    string `gorm:"type:varchar(500)" json:"image_url"`
-	IsActive    bool   `gorm:"default:true" json:"is_active"`
+	ID              string `json:"id" dynamodbav:"id"`
+	Name            string `json:"name" dynamodbav:"name"`
+	Description     string `json:"description" dynamodbav:"description"`
+	Category        string `json:"category" dynamodbav:"category"`
+	DurationMinutes int    `json:"durationMinutes" dynamodbav:"durationMinutes"`
+	Price           int    `json:"price" dynamodbav:"price"`
+	ImageURL        string `json:"imageUrl" dynamodbav:"imageUrl"`
+	IsActive        bool   `json:"isActive" dynamodbav:"isActive"`
+	SortOrder       int    `json:"sortOrder" dynamodbav:"sortOrder"`
 }

@@ -1,354 +1,375 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
-	"strconv"
+	"regexp"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"linda-salon-api/internal/middleware"
-	"linda-salon-api/internal/model"
-	"linda-salon-api/internal/repository"
+	"github.com/google/uuid"
+
+	"github.com/qq900306ss/linda-salon-api/internal/model"
+	"github.com/qq900306ss/linda-salon-api/internal/repository"
+	"github.com/qq900306ss/linda-salon-api/internal/service"
 )
 
+var (
+	dateRe  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	timeRe  = regexp.MustCompile(`^\d{2}:\d{2}$`)
+	phoneRe = regexp.MustCompile(`^[0-9+\-\s()]{8,20}$`)
+)
+
+// BookingHandler handles booking and timeslot routes.
 type BookingHandler struct {
-	bookingRepo *repository.BookingRepository
-	serviceRepo *repository.ServiceRepository
-	stylistRepo *repository.StylistRepository
-	userRepo    *repository.UserRepository
+	bookingRepo  *repository.BookingRepository
+	serviceRepo  *repository.ServiceRepository
+	stylistRepo  *repository.StylistRepository
+	settingsRepo *repository.SettingsRepository
 }
 
+// NewBookingHandler creates a BookingHandler.
 func NewBookingHandler(
 	bookingRepo *repository.BookingRepository,
 	serviceRepo *repository.ServiceRepository,
 	stylistRepo *repository.StylistRepository,
-	userRepo    *repository.UserRepository,
+	settingsRepo *repository.SettingsRepository,
 ) *BookingHandler {
 	return &BookingHandler{
-		bookingRepo: bookingRepo,
-		serviceRepo: serviceRepo,
-		stylistRepo: stylistRepo,
-		userRepo:    userRepo,
+		bookingRepo:  bookingRepo,
+		serviceRepo:  serviceRepo,
+		stylistRepo:  stylistRepo,
+		settingsRepo: settingsRepo,
 	}
 }
 
-type CreateBookingRequest struct {
-	ServiceIDs    []uint `json:"service_ids" binding:"required,min=1"` // 支援多個服務
-	StylistID     uint   `json:"stylist_id" binding:"required"`
-	Date          string `json:"date" binding:"required"`     // YYYY-MM-DD
-	StartTime     string `json:"start_time" binding:"required"` // HH:MM
-	Notes         string `json:"notes"`
-	CustomerName  string `json:"customer_name"`  // 可選：覆蓋用戶姓名
-	CustomerPhone string `json:"customer_phone"` // 可選：覆蓋用戶電話
-	CustomerEmail string `json:"customer_email"` // 可選：覆蓋用戶信箱
+type createBookingRequest struct {
+	ServiceID string `json:"serviceId" binding:"required"`
+	StylistID string `json:"stylistId" binding:"required"`
+	Date      string `json:"date" binding:"required"`
+	Time      string `json:"time" binding:"required"`
+	Customer  struct {
+		Name  string `json:"name" binding:"required"`
+		Phone string `json:"phone" binding:"required"`
+		Email string `json:"email"`
+		Notes string `json:"notes"`
+	} `json:"customer" binding:"required"`
 }
 
-type UpdateBookingRequest struct {
-	ServiceID *uint   `json:"service_id"`
-	StylistID *uint   `json:"stylist_id"`
-	Date      *string `json:"date"`
-	StartTime *string `json:"start_time"`
-	Status    *string `json:"status"`
-	Notes     *string `json:"notes"`
+// slotContext loads everything needed to compute slots for a stylist/date.
+type slotContext struct {
+	settings *model.Settings
+	stylist  *model.Stylist
+	bookings []model.Booking // stylist's non-cancelled bookings on the date
 }
 
-// ListBookings godoc
-// @Summary List bookings
-// @Tags bookings
-// @Security BearerAuth
-// @Produce json
-// @Param status query string false "Filter by status"
-// @Param start_date query string false "Start date (YYYY-MM-DD)"
-// @Param end_date query string false "End date (YYYY-MM-DD)"
-// @Param limit query int false "Limit" default(20)
-// @Param offset query int false "Offset" default(0)
-// @Success 200 {array} model.Booking
-// @Router /bookings [get]
-func (h *BookingHandler) ListBookings(c *gin.Context) {
-	userID, _ := middleware.GetUserID(c)
-	role, _ := middleware.GetUserRole(c)
+func (h *BookingHandler) loadSlotContext(c *gin.Context, stylistID, date string) (*slotContext, bool) {
+	ctx := c.Request.Context()
 
-	status := c.Query("status")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-
-	var startDate, endDate *time.Time
-	if sd := c.Query("start_date"); sd != "" {
-		t, _ := time.Parse("2006-01-02", sd)
-		startDate = &t
-	}
-	if ed := c.Query("end_date"); ed != "" {
-		t, _ := time.Parse("2006-01-02", ed)
-		endDate = &t
+	settings, err := h.settingsRepo.Get(ctx)
+	if err != nil || settings == nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load settings")
+		return nil, false
 	}
 
-	var userIDPtr *uint
-	// Non-admin users can only see their own bookings
-	if role != "admin" {
-		userIDPtr = &userID
-	}
-
-	bookings, total, err := h.bookingRepo.List(userIDPtr, status, startDate, endDate, limit, offset)
+	stylist, err := h.stylistRepo.GetByID(ctx, stylistID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch bookings"})
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load stylist")
+		return nil, false
+	}
+	if stylist == nil || !stylist.IsActive {
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Stylist not found")
+		return nil, false
+	}
+
+	dayBookings, err := h.bookingRepo.ListByDate(ctx, date)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load bookings")
+		return nil, false
+	}
+	var stylistBookings []model.Booking
+	for _, b := range dayBookings {
+		if b.StylistID == stylistID && b.Status != model.BookingStatusCancelled {
+			stylistBookings = append(stylistBookings, b)
+		}
+	}
+
+	return &slotContext{settings: settings, stylist: stylist, bookings: stylistBookings}, true
+}
+
+// GetTimeSlots handles GET /api/timeslots?stylistId=&date=&serviceId=.
+func (h *BookingHandler) GetTimeSlots(c *gin.Context) {
+	stylistID := c.Query("stylistId")
+	date := c.Query("date")
+	serviceID := c.Query("serviceId")
+
+	if stylistID == "" || !dateRe.MatchString(date) {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "stylistId and date (YYYY-MM-DD) are required")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"bookings": bookings,
-		"total":    total,
-		"limit":    limit,
-		"offset":   offset,
+	duration := 0
+	if serviceID != "" {
+		svc, err := h.serviceRepo.GetByID(c.Request.Context(), serviceID)
+		if err != nil {
+			Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load service")
+			return
+		}
+		if svc == nil {
+			Fail(c, http.StatusNotFound, "NOT_FOUND", "Service not found")
+			return
+		}
+		duration = svc.DurationMinutes
+	}
+
+	sc, ok := h.loadSlotContext(c, stylistID, date)
+	if !ok {
+		return
+	}
+
+	slots, err := service.GenerateTimeSlots(service.SlotQuery{
+		Settings:        *sc.settings,
+		Stylist:         *sc.stylist,
+		Date:            date,
+		DurationMinutes: duration,
+		Bookings:        sc.bookings,
+		Now:             time.Now().In(service.TaipeiLocation()),
 	})
-}
-
-// GetBooking godoc
-// @Summary Get booking by ID
-// @Tags bookings
-// @Security BearerAuth
-// @Produce json
-// @Param id path int true "Booking ID"
-// @Success 200 {object} model.Booking
-// @Router /bookings/{id} [get]
-func (h *BookingHandler) GetBooking(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid booking ID"})
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 
-	booking, err := h.bookingRepo.GetByID(uint(id))
+	OK(c, http.StatusOK, gin.H{"date": date, "slots": slots})
+}
+
+// CreateBooking handles POST /api/bookings.
+func (h *BookingHandler) CreateBooking(c *gin.Context) {
+	var req createBookingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if !dateRe.MatchString(req.Date) {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "date must be in YYYY-MM-DD format")
+		return
+	}
+	if !timeRe.MatchString(req.Time) {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "time must be in HH:MM format")
+		return
+	}
+	if !phoneRe.MatchString(req.Customer.Phone) {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "phone format is invalid")
+		return
+	}
+
+	ctx := c.Request.Context()
+	svc, err := h.serviceRepo.GetByID(ctx, req.ServiceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch booking"})
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load service")
+		return
+	}
+	if svc == nil || !svc.IsActive {
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Service not found")
+		return
+	}
+
+	sc, ok := h.loadSlotContext(c, req.StylistID, req.Date)
+	if !ok {
+		return
+	}
+
+	slots, err := service.GenerateTimeSlots(service.SlotQuery{
+		Settings:        *sc.settings,
+		Stylist:         *sc.stylist,
+		Date:            req.Date,
+		DurationMinutes: svc.DurationMinutes,
+		Bookings:        sc.bookings,
+		Now:             time.Now().In(service.TaipeiLocation()),
+	})
+	if err != nil {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	var requested *service.TimeSlot
+	for i := range slots {
+		if slots[i].Time == req.Time {
+			requested = &slots[i]
+			break
+		}
+	}
+	if requested == nil {
+		Fail(c, http.StatusBadRequest, "INVALID_TIME", "Requested time is not a valid slot")
+		return
+	}
+	if !requested.Available {
+		Fail(c, http.StatusConflict, "SLOT_UNAVAILABLE", "該時段已無法預約，請選擇其他時間")
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	booking := model.Booking{
+		ID:              uuid.NewString(),
+		ServiceID:       svc.ID,
+		ServiceName:     svc.Name,
+		StylistID:       sc.stylist.ID,
+		StylistName:     sc.stylist.Name,
+		Date:            req.Date,
+		Time:            req.Time,
+		DurationMinutes: svc.DurationMinutes,
+		Price:           svc.Price,
+		Status:          model.BookingStatusPending,
+		Customer: model.Customer{
+			Name:  req.Customer.Name,
+			Phone: req.Customer.Phone,
+			Email: req.Customer.Email,
+			Notes: req.Customer.Notes,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := h.bookingRepo.Create(ctx, &booking); err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create booking")
+		return
+	}
+	OK(c, http.StatusCreated, booking)
+}
+
+// LookupBookings handles GET /api/bookings/lookup?phone=.
+func (h *BookingHandler) LookupBookings(c *gin.Context) {
+	phone := c.Query("phone")
+	if !phoneRe.MatchString(phone) {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "phone query parameter is required")
+		return
+	}
+	bookings, err := h.bookingRepo.ListByPhone(c.Request.Context(), phone, 20)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch bookings")
+		return
+	}
+	if bookings == nil {
+		bookings = []model.Booking{}
+	}
+	// Newest first: by date desc, then time desc.
+	sort.Slice(bookings, func(i, j int) bool {
+		if bookings[i].Date != bookings[j].Date {
+			return bookings[i].Date > bookings[j].Date
+		}
+		return bookings[i].Time > bookings[j].Time
+	})
+	OK(c, http.StatusOK, bookings)
+}
+
+// ListBookingsAdmin handles GET /api/admin/bookings?date=&from=&to=&status=&stylistId=.
+func (h *BookingHandler) ListBookingsAdmin(c *gin.Context) {
+	ctx := c.Request.Context()
+	date := c.Query("date")
+	from := c.Query("from")
+	to := c.Query("to")
+	status := c.Query("status")
+	stylistID := c.Query("stylistId")
+
+	var bookings []model.Booking
+	var err error
+	switch {
+	case date != "":
+		if !dateRe.MatchString(date) {
+			Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "date must be in YYYY-MM-DD format")
+			return
+		}
+		bookings, err = h.bookingRepo.ListByDate(ctx, date)
+	case from != "" && to != "":
+		if !dateRe.MatchString(from) || !dateRe.MatchString(to) {
+			Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "from/to must be in YYYY-MM-DD format")
+			return
+		}
+		bookings, err = h.bookingRepo.ListByDateRange(ctx, from, to)
+	case from != "" || to != "":
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "both from and to are required for a range query")
+		return
+	default:
+		today := time.Now().In(service.TaipeiLocation()).Format("2006-01-02")
+		bookings, err = h.bookingRepo.ListByDate(ctx, today)
+	}
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch bookings")
+		return
+	}
+
+	filtered := []model.Booking{}
+	for _, b := range bookings {
+		if status != "" && b.Status != status {
+			continue
+		}
+		if stylistID != "" && b.StylistID != stylistID {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].Date != filtered[j].Date {
+			return filtered[i].Date < filtered[j].Date
+		}
+		return filtered[i].Time < filtered[j].Time
+	})
+	OK(c, http.StatusOK, filtered)
+}
+
+type updateStatusRequest struct {
+	Status string `json:"status" binding:"required"`
+}
+
+// UpdateBookingStatus handles PATCH /api/admin/bookings/:id/status.
+func (h *BookingHandler) UpdateBookingStatus(c *gin.Context) {
+	id := c.Param("id")
+	var req updateStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "status is required")
+		return
+	}
+	if !model.ValidBookingStatus(req.Status) {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", "status must be pending, confirmed, completed or cancelled")
+		return
+	}
+
+	ctx := c.Request.Context()
+	booking, err := h.bookingRepo.GetByID(ctx, id)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch booking")
 		return
 	}
 	if booking == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Booking not found"})
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Booking not found")
 		return
 	}
-
-	// Check authorization
-	userID, _ := middleware.GetUserID(c)
-	role, _ := middleware.GetUserRole(c)
-	if role != "admin" && booking.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+	if err := h.bookingRepo.UpdateStatus(ctx, id, req.Status); err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update booking")
 		return
 	}
-
-	c.JSON(http.StatusOK, booking)
+	booking.Status = req.Status
+	booking.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	OK(c, http.StatusOK, booking)
 }
 
-// CreateBooking godoc
-// @Summary Create a new booking
-// @Tags bookings
-// @Security BearerAuth
-// @Accept json
-// @Produce json
-// @Param request body CreateBookingRequest true "Booking details"
-// @Success 201 {object} model.Booking
-// @Router /bookings [post]
-func (h *BookingHandler) CreateBooking(c *gin.Context) {
-	var req CreateBookingRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	userID, _ := middleware.GetUserID(c)
-
-	// Get user info
-	user, err := h.userRepo.GetByID(userID)
-	if err != nil || user == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
-		return
-	}
-
-	// Get all services info and calculate total duration and price
-	var services []model.BookingServiceItem
-	var totalDuration int
-	var totalPrice int
-
-	for _, serviceID := range req.ServiceIDs {
-		service, err := h.serviceRepo.GetByID(serviceID)
-		if err != nil || service == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid service ID: %d", serviceID)})
-			return
-		}
-
-		services = append(services, model.BookingServiceItem{
-			ID:       service.ID,
-			Name:     service.Name,
-			Price:    service.Price,
-			Duration: service.Duration,
-		})
-
-		totalDuration += service.Duration
-		totalPrice += service.Price
-	}
-
-	// Get stylist info
-	stylist, err := h.stylistRepo.GetByID(req.StylistID)
-	if err != nil || stylist == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid stylist"})
-		return
-	}
-
-	// Parse booking date
-	bookingDate, err := time.Parse("2006-01-02", req.Date)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format"})
-		return
-	}
-
-	// Calculate end time based on total duration
-	startHour, _ := strconv.Atoi(req.StartTime[:2])
-	startMin, _ := strconv.Atoi(req.StartTime[3:5])
-	endMin := startMin + totalDuration
-	endHour := startHour + (endMin / 60)
-	endMin = endMin % 60
-	endTime := time.Date(0, 0, 0, endHour, endMin, 0, 0, time.UTC).Format("15:04")
-
-	// Check stylist availability
-	available, err := h.stylistRepo.IsAvailable(req.StylistID, bookingDate, req.StartTime, endTime)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check availability"})
-		return
-	}
-	if !available {
-		c.JSON(http.StatusConflict, gin.H{"error": "Stylist is not available at this time"})
-		return
-	}
-
-	// 準備客戶資訊（優先使用前端傳來的，否則用資料庫的）
-	customerName := req.CustomerName
-	if customerName == "" {
-		customerName = user.Name
-	}
-
-	customerPhone := req.CustomerPhone
-	if customerPhone == "" && user.Phone != nil {
-		customerPhone = *user.Phone
-	}
-
-	customerEmail := req.CustomerEmail
-	if customerEmail == "" {
-		customerEmail = user.Email
-	}
-
-	// Create booking
-	booking := &model.Booking{
-		UserID:        userID,
-		StylistID:     req.StylistID,
-		Services:      services,
-		BookingDate:   bookingDate,
-		StartTime:     req.StartTime,
-		EndTime:       endTime,
-		Duration:      totalDuration,
-		Price:         totalPrice,
-		Status:        model.BookingStatusPending,
-		Notes:         req.Notes,
-		CustomerName:  customerName,
-		CustomerPhone: customerPhone,
-		CustomerEmail: customerEmail,
-	}
-
-	if err := h.bookingRepo.Create(booking); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create booking"})
-		return
-	}
-
-	// Fetch complete booking with relations
-	booking, _ = h.bookingRepo.GetByID(booking.ID)
-
-	c.JSON(http.StatusCreated, booking)
-}
-
-// UpdateBookingStatus godoc
-// @Summary Update booking status (admin only)
-// @Tags bookings
-// @Security BearerAuth
-// @Accept json
-// @Produce json
-// @Param id path int true "Booking ID"
-// @Param status body map[string]string true "Status"
-// @Success 200 {object} model.Booking
-// @Router /bookings/{id}/status [patch]
-func (h *BookingHandler) UpdateBookingStatus(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid booking ID"})
-		return
-	}
-
-	var req struct {
-		Status string `json:"status" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Validate status
-	validStatuses := map[string]bool{
-		model.BookingStatusPending:   true,
-		model.BookingStatusConfirmed: true,
-		model.BookingStatusCompleted: true,
-		model.BookingStatusCancelled: true,
-	}
-	if !validStatuses[req.Status] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
-		return
-	}
-
-	if err := h.bookingRepo.UpdateStatus(uint(id), req.Status); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update status"})
-		return
-	}
-
-	booking, _ := h.bookingRepo.GetByID(uint(id))
-	c.JSON(http.StatusOK, booking)
-}
-
-// CancelBooking godoc
-// @Summary Cancel a booking
-// @Tags bookings
-// @Security BearerAuth
-// @Param id path int true "Booking ID"
-// @Success 200 {object} model.Booking
-// @Router /bookings/{id}/cancel [post]
+// CancelBooking handles DELETE /api/admin/bookings/:id (sets status cancelled).
 func (h *BookingHandler) CancelBooking(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	id := c.Param("id")
+	ctx := c.Request.Context()
+	booking, err := h.bookingRepo.GetByID(ctx, id)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid booking ID"})
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch booking")
 		return
 	}
-
-	booking, err := h.bookingRepo.GetByID(uint(id))
-	if err != nil || booking == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Booking not found"})
+	if booking == nil {
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Booking not found")
 		return
 	}
-
-	// Check authorization
-	userID, _ := middleware.GetUserID(c)
-	role, _ := middleware.GetUserRole(c)
-	if role != "admin" && booking.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
+	if err := h.bookingRepo.UpdateStatus(ctx, id, model.BookingStatusCancelled); err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel booking")
 		return
 	}
-
-	// Check if cancellable
-	if !booking.IsCancellable() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Booking cannot be cancelled"})
-		return
-	}
-
-	if err := h.bookingRepo.UpdateStatus(uint(id), model.BookingStatusCancelled); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel booking"})
-		return
-	}
-
-	booking, _ = h.bookingRepo.GetByID(uint(id))
-	c.JSON(http.StatusOK, booking)
+	booking.Status = model.BookingStatusCancelled
+	booking.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	OK(c, http.StatusOK, booking)
 }

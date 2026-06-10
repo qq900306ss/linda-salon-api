@@ -1,9 +1,11 @@
-# Binaries for programs and plugins
+# Binaries
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+bootstrap
+function.zip
 
 # Test binary, built with `go test -c`
 *.test
@@ -16,6 +18,7 @@ vendor/
 
 # Go workspace file
 go.work
+go.work.sum
 
 # Environment variables
 .env

@@ -1,40 +1,42 @@
 package model
 
-import (
-	"time"
-
-	"gorm.io/gorm"
-)
-
-type Stylist struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-
-	Name        string `gorm:"type:varchar(100);not null" json:"name"`
-	Description string `gorm:"type:text" json:"description"`
-	Specialty   string `gorm:"type:varchar(100)" json:"specialty"`
-	Experience  int    `gorm:"default:0" json:"experience"` // years of experience
-	Avatar      string `gorm:"type:varchar(500)" json:"avatar"`
-	IsActive    bool   `gorm:"default:true" json:"is_active"`
-
-	// Relationships
-	Schedules []StylistSchedule `gorm:"foreignKey:StylistID" json:"schedules,omitempty"`
-	Bookings  []Booking         `gorm:"foreignKey:StylistID" json:"bookings,omitempty"`
+// Schedule describes a stylist's recurring working schedule.
+type Schedule struct {
+	// WorkDays uses Go's time.Weekday convention: 0=Sunday ... 6=Saturday.
+	WorkDays  []int    `json:"workDays" dynamodbav:"workDays"`
+	StartTime string   `json:"startTime" dynamodbav:"startTime"` // "10:00"
+	EndTime   string   `json:"endTime" dynamodbav:"endTime"`     // "19:00"
+	DaysOff   []string `json:"daysOff" dynamodbav:"daysOff"`     // ["YYYY-MM-DD"]
 }
 
-type StylistSchedule struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+// Normalize replaces nil slices with empty slices so JSON output stays as arrays.
+func (s *Schedule) Normalize() {
+	if s.WorkDays == nil {
+		s.WorkDays = []int{}
+	}
+	if s.DaysOff == nil {
+		s.DaysOff = []string{}
+	}
+}
 
-	StylistID uint   `gorm:"not null;index" json:"stylist_id"`
-	Stylist   Stylist `gorm:"foreignKey:StylistID" json:"stylist,omitempty"`
+// Stylist represents a hair stylist.
+type Stylist struct {
+	ID              string   `json:"id" dynamodbav:"id"`
+	Name            string   `json:"name" dynamodbav:"name"`
+	Title           string   `json:"title" dynamodbav:"title"`
+	Bio             string   `json:"bio" dynamodbav:"bio"`
+	Specialties     []string `json:"specialties" dynamodbav:"specialties"`
+	ImageURL        string   `json:"imageUrl" dynamodbav:"imageUrl"`
+	YearsExperience int      `json:"yearsExperience" dynamodbav:"yearsExperience"`
+	Rating          float64  `json:"rating" dynamodbav:"rating"`
+	IsActive        bool     `json:"isActive" dynamodbav:"isActive"`
+	Schedule        Schedule `json:"schedule" dynamodbav:"schedule"`
+}
 
-	DayOfWeek int    `gorm:"not null" json:"day_of_week"` // 0=Sunday, 1=Monday, ..., 6=Saturday
-	StartTime string `gorm:"type:varchar(5);not null" json:"start_time"` // HH:MM format
-	EndTime   string `gorm:"type:varchar(5);not null" json:"end_time"`   // HH:MM format
-	IsActive  bool   `gorm:"default:true" json:"is_active"`
+// Normalize replaces nil slices with empty slices so JSON output stays as arrays.
+func (s *Stylist) Normalize() {
+	if s.Specialties == nil {
+		s.Specialties = []string{}
+	}
+	s.Schedule.Normalize()
 }

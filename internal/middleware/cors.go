@@ -1,36 +1,40 @@
 package middleware
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/gin-gonic/gin"
-	"linda-salon-api/config"
 )
 
-func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
+// CORS returns a middleware that handles cross-origin requests.
+// allowedOrigins is a comma-separated list; "*" allows any origin.
+func CORS(allowedOrigins string) gin.HandlerFunc {
+	allowAll := allowedOrigins == "" || allowedOrigins == "*"
+	origins := map[string]bool{}
+	for _, o := range strings.Split(allowedOrigins, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			origins[o] = true
+		}
+	}
+
 	return func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-
-		// Check if origin is allowed
-		allowed := false
-		for _, allowedOrigin := range cfg.AllowedOrigins {
-			if origin == allowedOrigin || allowedOrigin == "*" {
-				allowed = true
-				break
-			}
+		origin := c.GetHeader("Origin")
+		if allowAll {
+			c.Header("Access-Control-Allow-Origin", "*")
+		} else if origins[origin] {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
 		}
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		c.Header("Access-Control-Max-Age", "86400")
 
-		if allowed {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			c.Writer.Header().Set("Access-Control-Max-Age", "86400")
-		}
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-
 		c.Next()
 	}
 }

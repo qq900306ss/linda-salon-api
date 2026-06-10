@@ -2,204 +2,153 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"linda-salon-api/internal/model"
-	"linda-salon-api/internal/repository"
+	"github.com/google/uuid"
+
+	"github.com/qq900306ss/linda-salon-api/internal/model"
+	"github.com/qq900306ss/linda-salon-api/internal/repository"
 )
 
+// ServiceHandler handles service routes.
 type ServiceHandler struct {
 	serviceRepo *repository.ServiceRepository
 }
 
+// NewServiceHandler creates a ServiceHandler.
 func NewServiceHandler(serviceRepo *repository.ServiceRepository) *ServiceHandler {
 	return &ServiceHandler{serviceRepo: serviceRepo}
 }
 
-type CreateServiceRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
-	Category    string `json:"category" binding:"required"`
-	Price       int    `json:"price" binding:"required,min=0"`
-	Duration    int    `json:"duration" binding:"required,min=1"`
-	ImageURL    string `json:"image_url"`
+type serviceRequest struct {
+	Name            string `json:"name" binding:"required"`
+	Description     string `json:"description"`
+	Category        string `json:"category"`
+	DurationMinutes int    `json:"durationMinutes" binding:"required,min=1"`
+	Price           int    `json:"price" binding:"min=0"`
+	ImageURL        string `json:"imageUrl"`
+	IsActive        *bool  `json:"isActive"`
+	SortOrder       int    `json:"sortOrder"`
 }
 
-type UpdateServiceRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Category    string `json:"category"`
-	Price       int    `json:"price" binding:"omitempty,min=0"`
-	Duration    int    `json:"duration" binding:"omitempty,min=1"`
-	ImageURL    string `json:"image_url"`
-	IsActive    *bool  `json:"is_active"`
-}
-
-// ListServices godoc
-// @Summary List all services
-// @Tags services
-// @Produce json
-// @Param category query string false "Filter by category"
-// @Param active_only query bool false "Show only active services"
-// @Success 200 {array} model.Service
-// @Router /services [get]
+// ListServices handles GET /api/services (active only).
 func (h *ServiceHandler) ListServices(c *gin.Context) {
-	category := c.Query("category")
-	activeOnly := c.DefaultQuery("active_only", "true") == "true"
-
-	services, err := h.serviceRepo.List(category, activeOnly)
+	services, err := h.serviceRepo.List(c.Request.Context(), true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch services"})
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch services")
 		return
 	}
-
-	c.JSON(http.StatusOK, services)
+	OK(c, http.StatusOK, services)
 }
 
-// GetService godoc
-// @Summary Get service by ID
-// @Tags services
-// @Produce json
-// @Param id path int true "Service ID"
-// @Success 200 {object} model.Service
-// @Router /services/{id} [get]
+// ListServicesAdmin handles GET /api/admin/services (includes inactive).
+func (h *ServiceHandler) ListServicesAdmin(c *gin.Context) {
+	services, err := h.serviceRepo.List(c.Request.Context(), false)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch services")
+		return
+	}
+	OK(c, http.StatusOK, services)
+}
+
+// GetService handles GET /api/services/:id.
 func (h *ServiceHandler) GetService(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	service, err := h.serviceRepo.GetByID(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid service ID"})
-		return
-	}
-
-	service, err := h.serviceRepo.GetByID(uint(id))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch service"})
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch service")
 		return
 	}
 	if service == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Service not found"})
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Service not found")
 		return
 	}
-
-	c.JSON(http.StatusOK, service)
+	OK(c, http.StatusOK, service)
 }
 
-// CreateService godoc
-// @Summary Create a new service (admin only)
-// @Tags services
-// @Security BearerAuth
-// @Accept json
-// @Produce json
-// @Param request body CreateServiceRequest true "Service details"
-// @Success 201 {object} model.Service
-// @Router /services [post]
+// CreateService handles POST /api/admin/services.
 func (h *ServiceHandler) CreateService(c *gin.Context) {
-	var req CreateServiceRequest
+	var req serviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-
-	service := &model.Service{
-		Name:        req.Name,
-		Description: req.Description,
-		Category:    req.Category,
-		Price:       req.Price,
-		Duration:    req.Duration,
-		ImageURL:    req.ImageURL,
-		IsActive:    true,
-	}
-
-	if err := h.serviceRepo.Create(service); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create service"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, service)
-}
-
-// UpdateService godoc
-// @Summary Update service (admin only)
-// @Tags services
-// @Security BearerAuth
-// @Accept json
-// @Produce json
-// @Param id path int true "Service ID"
-// @Param request body UpdateServiceRequest true "Service details"
-// @Success 200 {object} model.Service
-// @Router /services/{id} [put]
-func (h *ServiceHandler) UpdateService(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid service ID"})
-		return
-	}
-
-	service, err := h.serviceRepo.GetByID(uint(id))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch service"})
-		return
-	}
-	if service == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Service not found"})
-		return
-	}
-
-	var req UpdateServiceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Update fields
-	if req.Name != "" {
-		service.Name = req.Name
-	}
-	if req.Description != "" {
-		service.Description = req.Description
-	}
-	if req.Category != "" {
-		service.Category = req.Category
-	}
-	if req.Price > 0 {
-		service.Price = req.Price
-	}
-	if req.Duration > 0 {
-		service.Duration = req.Duration
-	}
-	if req.ImageURL != "" {
-		service.ImageURL = req.ImageURL
-	}
+	isActive := true
 	if req.IsActive != nil {
-		service.IsActive = *req.IsActive
+		isActive = *req.IsActive
 	}
-
-	if err := h.serviceRepo.Update(service); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update service"})
+	service := model.Service{
+		ID:              uuid.NewString(),
+		Name:            req.Name,
+		Description:     req.Description,
+		Category:        req.Category,
+		DurationMinutes: req.DurationMinutes,
+		Price:           req.Price,
+		ImageURL:        req.ImageURL,
+		IsActive:        isActive,
+		SortOrder:       req.SortOrder,
+	}
+	if err := h.serviceRepo.Put(c.Request.Context(), &service); err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create service")
 		return
 	}
-
-	c.JSON(http.StatusOK, service)
+	OK(c, http.StatusCreated, service)
 }
 
-// DeleteService godoc
-// @Summary Delete service (admin only)
-// @Tags services
-// @Security BearerAuth
-// @Param id path int true "Service ID"
-// @Success 204
-// @Router /services/{id} [delete]
-func (h *ServiceHandler) DeleteService(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+// UpdateService handles PUT /api/admin/services/:id.
+func (h *ServiceHandler) UpdateService(c *gin.Context) {
+	id := c.Param("id")
+	existing, err := h.serviceRepo.GetByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid service ID"})
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch service")
+		return
+	}
+	if existing == nil {
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Service not found")
 		return
 	}
 
-	if err := h.serviceRepo.Delete(uint(id)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete service"})
+	var req serviceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	isActive := existing.IsActive
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	service := model.Service{
+		ID:              id,
+		Name:            req.Name,
+		Description:     req.Description,
+		Category:        req.Category,
+		DurationMinutes: req.DurationMinutes,
+		Price:           req.Price,
+		ImageURL:        req.ImageURL,
+		IsActive:        isActive,
+		SortOrder:       req.SortOrder,
+	}
+	if err := h.serviceRepo.Put(c.Request.Context(), &service); err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update service")
+		return
+	}
+	OK(c, http.StatusOK, service)
+}
 
-	c.Status(http.StatusNoContent)
+// DeleteService handles DELETE /api/admin/services/:id.
+func (h *ServiceHandler) DeleteService(c *gin.Context) {
+	id := c.Param("id")
+	existing, err := h.serviceRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to fetch service")
+		return
+	}
+	if existing == nil {
+		Fail(c, http.StatusNotFound, "NOT_FOUND", "Service not found")
+		return
+	}
+	if err := h.serviceRepo.Delete(c.Request.Context(), id); err != nil {
+		Fail(c, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete service")
+		return
+	}
+	OK(c, http.StatusOK, gin.H{"deleted": true})
 }

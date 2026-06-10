@@ -1,52 +1,6 @@
 package model
 
-import (
-	"time"
-
-	"gorm.io/gorm"
-)
-
-// BookingServiceItem represents a service item in a booking (stored in JSONB)
-type BookingServiceItem struct {
-	ID       uint   `json:"id"`
-	Name     string `json:"name"`
-	Price    int    `json:"price"`
-	Duration int    `json:"duration"`
-}
-
-type Booking struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-
-	// Foreign Keys
-	UserID    uint `gorm:"not null;index" json:"user_id"`
-	StylistID uint `gorm:"not null;index" json:"stylist_id"`
-
-	// Relationships
-	User    User    `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	Stylist Stylist `gorm:"foreignKey:StylistID" json:"stylist,omitempty"`
-
-	// Multiple Services (JSONB)
-	Services []BookingServiceItem `gorm:"type:jsonb;serializer:json;not null" json:"services"`
-
-	// Booking Details
-	BookingDate time.Time `gorm:"not null;index" json:"booking_date"`
-	StartTime   string    `gorm:"type:varchar(5);not null" json:"start_time"` // HH:MM
-	EndTime     string    `gorm:"type:varchar(5);not null" json:"end_time"`   // HH:MM
-	Duration    int       `gorm:"not null" json:"duration"` // minutes
-	Price       int       `gorm:"not null" json:"price"`
-	Status      string    `gorm:"type:varchar(20);not null;default:'pending'" json:"status"` // pending, confirmed, completed, cancelled
-	Notes       string    `gorm:"type:text" json:"notes"`
-
-	// Customer Info (denormalized for easier queries)
-	CustomerName  string `gorm:"type:varchar(100);not null" json:"customer_name"`
-	CustomerPhone string `gorm:"type:varchar(20);not null" json:"customer_phone"`
-	CustomerEmail string `gorm:"type:varchar(255)" json:"customer_email"`
-}
-
-// BookingStatus constants
+// Booking statuses.
 const (
 	BookingStatusPending   = "pending"
 	BookingStatusConfirmed = "confirmed"
@@ -54,13 +8,44 @@ const (
 	BookingStatusCancelled = "cancelled"
 )
 
-// IsCancellable checks if booking can be cancelled
-func (b *Booking) IsCancellable() bool {
-	return b.Status == BookingStatusPending || b.Status == BookingStatusConfirmed
+// ValidBookingStatus reports whether s is a known booking status.
+func ValidBookingStatus(s string) bool {
+	switch s {
+	case BookingStatusPending, BookingStatusConfirmed, BookingStatusCompleted, BookingStatusCancelled:
+		return true
+	}
+	return false
 }
 
-// IsUpcoming checks if booking is in the future
-func (b *Booking) IsUpcoming() bool {
-	return b.BookingDate.After(time.Now()) &&
-		(b.Status == BookingStatusPending || b.Status == BookingStatusConfirmed)
+// Customer holds the customer contact info embedded in a booking.
+type Customer struct {
+	Name  string `json:"name" dynamodbav:"name"`
+	Phone string `json:"phone" dynamodbav:"phone"`
+	Email string `json:"email" dynamodbav:"email"`
+	Notes string `json:"notes" dynamodbav:"notes"`
+}
+
+// Booking represents a customer booking. Service/stylist info is denormalized
+// at creation time so historical records survive later edits.
+type Booking struct {
+	ID              string   `json:"id" dynamodbav:"id"`
+	ServiceID       string   `json:"serviceId" dynamodbav:"serviceId"`
+	ServiceName     string   `json:"serviceName" dynamodbav:"serviceName"`
+	StylistID       string   `json:"stylistId" dynamodbav:"stylistId"`
+	StylistName     string   `json:"stylistName" dynamodbav:"stylistName"`
+	Date            string   `json:"date" dynamodbav:"date"` // "YYYY-MM-DD"
+	Time            string   `json:"time" dynamodbav:"time"` // "HH:MM"
+	DurationMinutes int      `json:"durationMinutes" dynamodbav:"durationMinutes"`
+	Price           int      `json:"price" dynamodbav:"price"`
+	Status          string   `json:"status" dynamodbav:"status"`
+	Customer        Customer `json:"customer" dynamodbav:"customer"`
+	// Phone duplicates Customer.Phone as a top-level attribute for the phone-index GSI.
+	Phone     string `json:"-" dynamodbav:"phone"`
+	CreatedAt string `json:"createdAt" dynamodbav:"createdAt"` // RFC3339
+	UpdatedAt string `json:"updatedAt" dynamodbav:"updatedAt"` // RFC3339
+}
+
+// CountsAsRevenue reports whether this booking should be counted as revenue.
+func (b *Booking) CountsAsRevenue() bool {
+	return b.Status == BookingStatusConfirmed || b.Status == BookingStatusCompleted
 }
